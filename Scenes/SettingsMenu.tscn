@@ -1,0 +1,111 @@
+[gd_scene load_steps=2 format=3 uid="uid://settingsid"]
+
+[ext_resource type="Script" path="res://Scripts/UI/SettingsMenu.cs" id="1_settings"]
+
+[node name="SettingsMenu" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_settings")
+
+[node name="ColorRect" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.1, 0.1, 0.12, 1)
+
+[node name="MarginContainer" type="MarginContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/margin_left = 50
+theme_override_constants/margin_top = 50
+theme_override_constants/margin_right = 50
+theme_override_constants/margin_bottom = 50
+
+[node name="VBoxMain" type="VBoxContainer" parent="MarginContainer"]
+layout_mode = 2
+
+[node name="LabelTitle" type="Label" parent="MarginContainer/VBoxMain"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 48
+text = "Configurações Gerais"
+horizontal_alignment = 1
+
+[node name="HSeparator" type="HSeparator" parent="MarginContainer/VBoxMain"]
+layout_mode = 2
+theme_override_constants/separation = 40
+
+[node name="HBoxContent" type="HBoxContainer" parent="MarginContainer/VBoxMain"]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/separation = 50
+
+[node name="VBoxTabs" type="VBoxContainer" parent="MarginContainer/VBoxMain/HBoxContent"]
+custom_minimum_size = Vector2(250, 0)
+layout_mode = 2
+theme_override_constants/separation = 20
+
+[node name="BtnVideo" type="Button" parent="MarginContainer/VBoxMain/HBoxContent/VBoxTabs"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "Vídeo"
+
+[node name="BtnAudio" type="Button" parent="MarginContainer/VBoxMain/HBoxContent/VBoxTabs"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "Áudio"
+
+[node name="BtnGeneral" type="Button" parent="MarginContainer/VBoxMain/HBoxContent/VBoxTabs"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "Geral / Jogo"
+
+[node name="BtnControls" type="Button" parent="MarginContainer/VBoxMain/HBoxContent/VBoxTabs"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "Controles"
+
+[node name="BtnExtras" type="Button" parent="MarginContainer/VBoxMain/HBoxContent/VBoxTabs"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "Extras"
+
+[node name="VSeparator" type="VSeparator" parent="MarginContainer/VBoxMain/HBoxContent"]
+layout_mode = 2
+
+[node name="PanelContent" type="PanelContainer" parent="MarginContainer/VBoxMain/HBoxContent"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="VBoxSettings" type="VBoxContainer" parent="MarginContainer/VBoxMain/HBoxContent/PanelContent"]
+layout_mode = 2
+theme_override_constants/separation = 30
+alignment = 1
+
+[node name="LabelWIP" type="Label" parent="MarginContainer/VBoxMain/HBoxContent/PanelContent/VBoxSettings"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "Configurações serão carregadas aqui..."
+horizontal_alignment = 1
+
+[node name="HBoxBack" type="HBoxContainer" parent="MarginContainer/VBoxMain"]
+layout_mode = 2
+alignment = 1
+
+[node name="BtnBack" type="Button" parent="MarginContainer/VBoxMain/HBoxBack"]
+custom_minimum_size = Vector2(300, 60)
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "Salvar e Voltar"
+
+[connection signal="pressed" from="MarginContainer/VBoxMain/HBoxBack/BtnBack" to="." method="OnBtnBackPressed"]

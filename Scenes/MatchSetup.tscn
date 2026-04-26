@@ -1,0 +1,131 @@
+[gd_scene load_steps=2 format=3 uid="uid://matchsetupid"]
+
+[ext_resource type="Script" path="res://Scripts/UI/MatchSetup.cs" id="1_setup"]
+
+[node name="MatchSetup" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_setup")
+
+[node name="ColorRect" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.12, 0.1, 0.1, 1)
+
+[node name="MarginContainer" type="MarginContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/margin_left = 100
+theme_override_constants/margin_top = 50
+theme_override_constants/margin_right = 100
+theme_override_constants/margin_bottom = 50
+
+[node name="VBoxMain" type="VBoxContainer" parent="MarginContainer"]
+layout_mode = 2
+theme_override_constants/separation = 40
+
+[node name="LabelTitle" type="Label" parent="MarginContainer/VBoxMain"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 48
+text = "Configuração de Partida (Lobby)"
+horizontal_alignment = 1
+
+[node name="PanelContainer" type="PanelContainer" parent="MarginContainer/VBoxMain"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="VBoxSettings" type="VBoxContainer" parent="MarginContainer/VBoxMain/PanelContainer"]
+layout_mode = 2
+theme_override_constants/separation = 30
+alignment = 1
+
+[node name="HBoxMap" type="HBoxContainer" parent="MarginContainer/VBoxMain/PanelContainer/VBoxSettings"]
+layout_mode = 2
+alignment = 1
+theme_override_constants/separation = 20
+
+[node name="Label" type="Label" parent="MarginContainer/VBoxMain/PanelContainer/VBoxSettings/HBoxMap"]
+custom_minimum_size = Vector2(250, 0)
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "Selecionar Mapa:"
+
+[node name="OptionMap" type="OptionButton" parent="MarginContainer/VBoxMain/PanelContainer/VBoxSettings/HBoxMap"]
+custom_minimum_size = Vector2(400, 0)
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+
+[node name="HBoxAI" type="HBoxContainer" parent="MarginContainer/VBoxMain/PanelContainer/VBoxSettings"]
+layout_mode = 2
+alignment = 1
+theme_override_constants/separation = 20
+
+[node name="Label" type="Label" parent="MarginContainer/VBoxMain/PanelContainer/VBoxSettings/HBoxAI"]
+custom_minimum_size = Vector2(250, 0)
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "Quantidade de IAs:"
+
+[node name="SpinBoxAI" type="SpinBox" parent="MarginContainer/VBoxMain/PanelContainer/VBoxSettings/HBoxAI"]
+custom_minimum_size = Vector2(400, 0)
+layout_mode = 2
+min_value = 0.0
+max_value = 20.0
+value = 3.0
+
+[node name="HBoxAggressiveness" type="HBoxContainer" parent="MarginContainer/VBoxMain/PanelContainer/VBoxSettings"]
+layout_mode = 2
+alignment = 1
+theme_override_constants/separation = 20
+
+[node name="Label" type="Label" parent="MarginContainer/VBoxMain/PanelContainer/VBoxSettings/HBoxAggressiveness"]
+custom_minimum_size = Vector2(250, 0)
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "Agressividade da IA:"
+
+[node name="OptionAggro" type="OptionButton" parent="MarginContainer/VBoxMain/PanelContainer/VBoxSettings/HBoxAggressiveness"]
+custom_minimum_size = Vector2(400, 0)
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+item_count = 3
+selected = 1
+popup/item_0/text = "Passiva"
+popup/item_0/id = 0
+popup/item_1/text = "Normal"
+popup/item_1/id = 1
+popup/item_2/text = "Muito Agressiva"
+popup/item_2/id = 2
+
+[node name="HBoxButtons" type="HBoxContainer" parent="MarginContainer/VBoxMain"]
+layout_mode = 2
+theme_override_constants/separation = 50
+alignment = 1
+
+[node name="BtnBack" type="Button" parent="MarginContainer/VBoxMain/HBoxButtons"]
+custom_minimum_size = Vector2(250, 60)
+layout_mode = 2
+theme_override_font_sizes/font_size = 28
+text = "Voltar"
+
+[node name="BtnStart" type="Button" parent="MarginContainer/VBoxMain/HBoxButtons"]
+custom_minimum_size = Vector2(250, 60)
+layout_mode = 2
+theme_override_colors/font_color = Color(0, 1, 0.2, 1)
+theme_override_font_sizes/font_size = 28
+text = "Iniciar Partida"
+
+[connection signal="pressed" from="MarginContainer/VBoxMain/HBoxButtons/BtnBack" to="." method="OnBtnBackPressed"]
+[connection signal="pressed" from="MarginContainer/VBoxMain/HBoxButtons/BtnStart" to="." method="OnBtnStartPressed"]

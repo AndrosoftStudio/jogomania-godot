@@ -1,0 +1,196 @@
+[gd_scene load_steps=2 format=3 uid="uid://mainmenuid"]
+
+[ext_resource type="Script" path="res://Scripts/UI/MainMenu.cs" id="1_mainmenu"]
+
+[node name="MainMenu" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_mainmenu")
+
+[node name="ColorRect" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.14902, 0.14902, 0.168627, 1)
+
+[node name="MarginContainer" type="MarginContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/margin_left = 50
+theme_override_constants/margin_top = 50
+theme_override_constants/margin_right = 50
+theme_override_constants/margin_bottom = 50
+
+[node name="VBoxMain" type="VBoxContainer" parent="MarginContainer"]
+layout_mode = 2
+
+[node name="LabelTitle" type="Label" parent="MarginContainer/VBoxMain"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 64
+text = "JOGOMANIA"
+horizontal_alignment = 1
+
+[node name="HSeparator" type="HSeparator" parent="MarginContainer/VBoxMain"]
+layout_mode = 2
+theme_override_constants/separation = 40
+
+[node name="HBoxContent" type="HBoxContainer" parent="MarginContainer/VBoxMain"]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/separation = 50
+
+[node name="VBoxButtons" type="VBoxContainer" parent="MarginContainer/VBoxMain/HBoxContent"]
+custom_minimum_size = Vector2(300, 0)
+layout_mode = 2
+theme_override_constants/separation = 20
+alignment = 1
+
+[node name="BtnContinue" type="Button" parent="MarginContainer/VBoxMain/HBoxContent/VBoxButtons"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "Continuar Jogo"
+
+[node name="BtnNewSolo" type="Button" parent="MarginContainer/VBoxMain/HBoxContent/VBoxButtons"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "Novo Jogo Solo"
+
+[node name="BtnMultiplayer" type="Button" parent="MarginContainer/VBoxMain/HBoxContent/VBoxButtons"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "Multijogador (Online)"
+
+[node name="BtnSettings" type="Button" parent="MarginContainer/VBoxMain/HBoxContent/VBoxButtons"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "Configurações"
+
+[node name="BtnEditor" type="Button" parent="MarginContainer/VBoxMain/HBoxContent/VBoxButtons"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "Editor de Mapas"
+
+[node name="BtnExit" type="Button" parent="MarginContainer/VBoxMain/HBoxContent/VBoxButtons"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "Sair"
+
+[node name="PanelPreview" type="PanelContainer" parent="MarginContainer/VBoxMain/HBoxContent"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="VBoxPreview" type="VBoxContainer" parent="MarginContainer/VBoxMain/HBoxContent/PanelPreview"]
+layout_mode = 2
+
+[node name="LabelPreviewTitle" type="Label" parent="MarginContainer/VBoxMain/HBoxContent/PanelPreview/VBoxPreview"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "Última Partida: Slot 1"
+horizontal_alignment = 1
+
+[node name="TexturePreview" type="TextureRect" parent="MarginContainer/VBoxMain/HBoxContent/PanelPreview/VBoxPreview"]
+layout_mode = 2
+size_flags_vertical = 3
+expand_mode = 1
+stretch_mode = 5
+
+[node name="LabelInfo" type="Label" parent="MarginContainer/VBoxMain/HBoxContent/PanelPreview/VBoxPreview"]
+layout_mode = 2
+text = "Ano: 1978 | Facção: Jogador | População: 20"
+horizontal_alignment = 1
+
+[connection signal="pressed" from="MarginContainer/VBoxMain/HBoxContent/VBoxButtons/BtnContinue" to="." method="OnBtnContinuePressed"]
+[connection signal="pressed" from="MarginContainer/VBoxMain/HBoxContent/VBoxButtons/BtnNewSolo" to="." method="OnBtnNewSoloPressed"]
+[connection signal="pressed" from="MarginContainer/VBoxMain/HBoxContent/VBoxButtons/BtnMultiplayer" to="." method="OnBtnMultiplayerPressed"]
+[connection signal="pressed" from="MarginContainer/VBoxMain/HBoxContent/VBoxButtons/BtnSettings" to="." method="OnBtnSettingsPressed"]
+[connection signal="pressed" from="MarginContainer/VBoxMain/HBoxContent/VBoxButtons/BtnEditor" to="." method="OnBtnEditorPressed"]
+[connection signal="pressed" from="MarginContainer/VBoxMain/HBoxContent/VBoxButtons/BtnExit" to="." method="OnBtnExitPressed"]
+
+[node name="SettingsPanel" type="PanelContainer" parent="."]
+visible = false
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -250.0
+offset_top = -200.0
+offset_right = 250.0
+offset_bottom = 200.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="VBoxContainer" type="VBoxContainer" parent="SettingsPanel"]
+layout_mode = 2
+theme_override_constants/separation = 20
+alignment = 1
+
+[node name="LabelTitle" type="Label" parent="SettingsPanel/VBoxContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 32
+text = "Configurações"
+horizontal_alignment = 1
+
+[node name="HBoxVideo" type="HBoxContainer" parent="SettingsPanel/VBoxContainer"]
+layout_mode = 2
+alignment = 1
+
+[node name="Label" type="Label" parent="SettingsPanel/VBoxContainer/HBoxVideo"]
+layout_mode = 2
+text = "Modo de Janela:"
+
+[node name="OptionWindow" type="OptionButton" parent="SettingsPanel/VBoxContainer/HBoxVideo"]
+layout_mode = 2
+item_count = 2
+selected = 0
+popup/item_0/text = "Modo Janela"
+popup/item_0/id = 0
+popup/item_1/text = "Tela Cheia"
+popup/item_1/id = 1
+
+[node name="HBoxAudio" type="HBoxContainer" parent="SettingsPanel/VBoxContainer"]
+layout_mode = 2
+alignment = 1
+
+[node name="Label" type="Label" parent="SettingsPanel/VBoxContainer/HBoxAudio"]
+layout_mode = 2
+text = "Volume Geral:"
+
+[node name="SliderAudio" type="HSlider" parent="SettingsPanel/VBoxContainer/HBoxAudio"]
+custom_minimum_size = Vector2(200, 0)
+layout_mode = 2
+value = 100.0
+
+[node name="HBoxSaves" type="HBoxContainer" parent="SettingsPanel/VBoxContainer"]
+layout_mode = 2
+alignment = 1
+
+[node name="Label" type="Label" parent="SettingsPanel/VBoxContainer/HBoxSaves"]
+layout_mode = 2
+text = "Manter Autosaves (Max):"
+
+[node name="SpinBoxSaves" type="SpinBox" parent="SettingsPanel/VBoxContainer/HBoxSaves"]
+layout_mode = 2
+min_value = 1.0
+max_value = 20.0
+value = 5.0
+
+[node name="BtnCloseSettings" type="Button" parent="SettingsPanel/VBoxContainer"]
+custom_minimum_size = Vector2(200, 50)
+layout_mode = 2
+size_flags_horizontal = 4
+text = "Salvar e Voltar"
+
+[connection signal="pressed" from="SettingsPanel/VBoxContainer/BtnCloseSettings" to="." method="OnBtnCloseSettingsPressed"]
