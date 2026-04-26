@@ -9,6 +9,43 @@ uniform float time_offset = 0.0;
 varying vec3 world_normal;
 varying vec3 world_pos;
 
+float hash(vec2 p) {
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+}
+
+float noise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    float a = hash(i);
+    float b = hash(i + vec2(1.0, 0.0));
+    float c = hash(i + vec2(0.0, 1.0));
+    float d = hash(i + vec2(1.0, 1.0));
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
+}
+
+float fbm(vec2 p) {
+    float v = 0.0;
+    float a = 0.5;
+    for (int i = 0; i < 5; i++) {
+        v += noise(p) * a;
+        p *= 2.03;
+        a *= 0.52;
+    }
+    return v;
+}
+
+float cloud_mask(vec3 n, float time) {
+    float drift = time * 0.018;
+    vec2 p1 = n.xy * 4.2 + vec2(drift, -drift * 0.35);
+    vec2 p2 = n.yz * 4.2 + vec2(-drift * 0.55, drift * 0.45);
+    vec2 p3 = n.zx * 4.2 + vec2(drift * 0.3, drift * 0.7);
+    float cloud_noise = (fbm(p1) + fbm(p2) + fbm(p3)) / 3.0;
+    float soft_mass = smoothstep(0.34, 0.55, cloud_noise);
+    float bright_core = smoothstep(0.54, 0.70, cloud_noise);
+    return clamp(soft_mass * 0.58 + bright_core * 0.34, 0.0, 1.0);
+}
+
 void vertex() {
     world_normal = normalize((MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz);
     world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
@@ -30,6 +67,12 @@ void fragment() {
     float spec = pow(max(dot(view_dir, reflected), 0.0), 56.0) * ocean * day * 0.30;
 
     color *= mix(0.045, 1.0, day);
+
+    float clouds = cloud_mask(n, time_offset);
+    float cloud_alpha = clouds * mix(0.28, 0.54, day);
+    vec3 cloud_lit = mix(vec3(0.004, 0.006, 0.010), vec3(0.88, 0.94, 1.0), day);
+    color = mix(color, cloud_lit, cloud_alpha);
+
     color += vec3(spec);
     ALBEDO = color;
     ALPHA = 1.0;

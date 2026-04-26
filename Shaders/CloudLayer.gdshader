@@ -1,7 +1,7 @@
 ﻿shader_type spatial;
-render_mode blend_mix, unshaded, cull_back, depth_draw_never;
+render_mode blend_mix, unshaded, cull_back, depth_prepass_alpha;
 
-uniform vec4 cloud_color : source_color = vec4(1.0, 1.0, 1.0, 0.42);
+uniform vec4 cloud_color : source_color = vec4(1.0, 1.0, 1.0, 0.34);
 uniform vec3 sun_direction = vec3(1.0, 0.2, 0.0);
 uniform float time_offset = 0.0;
 
@@ -39,15 +39,18 @@ void vertex() {
 
 void fragment() {
     vec3 n = normalize(world_normal);
-    float day = smoothstep(-0.25, 0.12, dot(n, normalize(sun_direction)));
+    float day = smoothstep(-0.28, 0.04, dot(n, normalize(sun_direction)));
+    float visibility = mix(0.16, 0.72, day);
 
     float drift = time_offset * 0.018;
     vec2 p1 = n.xy * 4.2 + vec2(drift, -drift * 0.35);
     vec2 p2 = n.yz * 4.2 + vec2(-drift * 0.55, drift * 0.45);
     vec2 p3 = n.zx * 4.2 + vec2(drift * 0.3, drift * 0.7);
-    float cloud = (fbm(p1) + fbm(p2) + fbm(p3)) / 3.0;
-    cloud = smoothstep(0.48, 0.66, cloud);
+    float cloud_noise = (fbm(p1) + fbm(p2) + fbm(p3)) / 3.0;
+    float soft_mass = smoothstep(0.32, 0.52, cloud_noise);
+    float bright_core = smoothstep(0.50, 0.66, cloud_noise);
+    float cloud = clamp(soft_mass * 0.82 + bright_core * 0.50, 0.0, 1.0);
 
-    ALBEDO = cloud_color.rgb;
-    ALPHA = cloud * cloud_color.a * day;
+    ALBEDO = mix(vec3(0.006, 0.009, 0.014), mix(vec3(0.78, 0.84, 0.92), cloud_color.rgb, bright_core), day);
+    ALPHA = cloud * cloud_color.a * visibility;
 }

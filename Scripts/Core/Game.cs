@@ -13,6 +13,7 @@ namespace Jogomania.Core
 		private const float TacticalEntryDistance = 1.08f;
 		private const float TacticalExitZoom = 3.5f;
 		private const float TacticalInitialZoom = 4.0f;
+		private const float MaxGlobeDistance = 10.5f;
 		private const float SunSpeed = 0.005f;
 
 		private Label _labelStatus;
@@ -130,7 +131,7 @@ namespace Jogomania.Core
 			_camera3D.Environment = env;
 
 			_atmosMesh = new MeshInstance3D();
-			var sphere = new SphereMesh { Radius = 1.058f, Height = 2.116f, RadialSegments = 128, Rings = 64 };
+			var sphere = new SphereMesh { Radius = 1.105f, Height = 2.21f, RadialSegments = 128, Rings = 64 };
 			_atmosMesh.Mesh = sphere;
 			_atmosShaderMat = new ShaderMaterial();
 			Shader atmosShader = GD.Load<Shader>("res://Shaders/Atmosphere.gdshader");
@@ -139,20 +140,20 @@ namespace Jogomania.Core
 				_atmosShaderMat.Shader = atmosShader;
 				_atmosShaderMat.SetShaderParameter("atmosphere_color", new Color(0.34f, 0.62f, 1.0f, 1.0f));
 				_atmosShaderMat.SetShaderParameter("twilight_color", new Color(1.0f, 0.45f, 0.16f, 1.0f));
-				_atmosShaderMat.SetShaderParameter("falloff", 2.7f);
-				_atmosShaderMat.SetShaderParameter("intensity", 1.05f);
+				_atmosShaderMat.SetShaderParameter("falloff", 2.15f);
+				_atmosShaderMat.SetShaderParameter("intensity", 0.95f);
 			}
 			_atmosMesh.MaterialOverride = _atmosShaderMat;
 			_globeContainer.AddChild(_atmosMesh);
 
 			_cloudMesh = new MeshInstance3D();
-			_cloudMesh.Mesh = new SphereMesh { Radius = 1.035f, Height = 2.07f, RadialSegments = 128, Rings = 64 };
+			_cloudMesh.Mesh = new SphereMesh { Radius = 1.072f, Height = 2.144f, RadialSegments = 128, Rings = 64 };
 			_cloudShaderMat = new ShaderMaterial();
 			Shader cloudShader = GD.Load<Shader>("res://Shaders/CloudLayer.gdshader");
 			if (cloudShader != null)
 			{
 				_cloudShaderMat.Shader = cloudShader;
-				_cloudShaderMat.SetShaderParameter("cloud_color", new Color(1f, 1f, 1f, 0.30f));
+				_cloudShaderMat.SetShaderParameter("cloud_color", new Color(1f, 1f, 1f, 0.34f));
 			}
 			_cloudMesh.MaterialOverride = _cloudShaderMat;
 			_globeContainer.AddChild(_cloudMesh);
@@ -670,7 +671,7 @@ namespace Jogomania.Core
 			{
 				if (!_isTacticalMode)
 				{
-					_cameraDistance = Mathf.Min(5.0f, _cameraDistance + 0.15f);
+					_cameraDistance = Mathf.Min(MaxGlobeDistance, _cameraDistance + 0.15f);
 					UpdateCameraOrbit();
 				}
 				else
@@ -756,7 +757,7 @@ namespace Jogomania.Core
 			Vector2 pinchCenter = (_finger0Pos + _finger1Pos) * 0.5f;
 			if (!_isTacticalMode)
 			{
-				_cameraDistance = Mathf.Clamp(_cameraDistance - delta * 0.005f, TacticalEntryDistance, 5.0f);
+				_cameraDistance = Mathf.Clamp(_cameraDistance - delta * 0.005f, TacticalEntryDistance, MaxGlobeDistance);
 				UpdateCameraOrbit();
 				if (_cameraDistance <= TacticalEntryDistance) EnterTacticalMode(pinchCenter);
 			}
