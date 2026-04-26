@@ -17,6 +17,12 @@ namespace Jogomania.Data
 
         public List<Continent> Continents { get; set; } = new List<Continent>();
         public List<VillageData> Villages { get; set; } = new List<VillageData>();
+        public List<RiverData> Rivers { get; set; } = new List<RiverData>();
+        public List<ResourceRegionData> ResourceRegions { get; set; } = new List<ResourceRegionData>();
+
+        public int MoonTextureWidth { get; set; } = 0;
+        public int MoonTextureHeight { get; set; } = 0;
+        public byte[] MoonTextureData { get; set; }
 
         [System.Text.Json.Serialization.JsonIgnore]
         public Dictionary<Vector2I, ChunkData> Chunks { get; set; } = new Dictionary<Vector2I, ChunkData>();
@@ -25,5 +31,29 @@ namespace Jogomania.Data
         public List<ChunkData> ChunksList { get; set; } = new List<ChunkData>();
         
         // Opcionalmente podemos ter dados ECS aqui, mas a estrutura ECS geralmente fica separada
+    }
+
+    public class RiverData
+    {
+        public List<MapPointData> Points { get; set; } = new List<MapPointData>();
+        public float Width { get; set; } = 1.0f;
+    }
+
+    public class MapPointData
+    {
+        public int X { get; set; }
+        public int Y { get; set; }
+    }
+
+    public class ResourceRegionData
+    {
+        public string ResourceId { get; set; }
+        public string Category { get; set; }
+        public int X { get; set; }
+        public int Y { get; set; }
+        public int Radius { get; set; }
+        public float Richness { get; set; }
+        public float MigrationAngle { get; set; }
+        public float MigrationSpeed { get; set; }
     }
 }

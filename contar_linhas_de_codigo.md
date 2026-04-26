@@ -1,0 +1,1 @@
+Get-ChildItem -Path "Scenes", "Scripts", "Shaders" -Include *.cs, *.gdshader -Recurse -File | Group-Object Extension | Select-Object Name, @{Name="Linhas";Expression={($_.Group | Get-Content | Measure-Object -Line).Lines}}

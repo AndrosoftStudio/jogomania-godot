@@ -1,5 +1,5 @@
 shader_type spatial;
-render_mode unshaded, cull_front, depth_draw_never;
+render_mode blend_mix, unshaded, cull_front, depth_draw_never;
 
 uniform sampler2D star_texture : source_color;
 uniform float time_offset : hint_range(0.0, 1000.0) = 0.0;

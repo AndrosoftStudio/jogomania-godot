@@ -1,58 +1,68 @@
 using Godot;
-using System.IO;
-using System.Text.Json;
 using System.Collections.Generic;
+using System.IO;
 using System.Threading.Tasks;
 using Jogomania.Data;
-using Jogomania.Map;
 using Jogomania.ECS;
+using Jogomania.Map;
 
 namespace Jogomania.Core
 {
 	public partial class Game : Node2D
 	{
+		private const float TacticalEntryDistance = 1.08f;
+		private const float TacticalExitZoom = 3.5f;
+		private const float TacticalInitialZoom = 4.0f;
+		private const float SunSpeed = 0.005f;
+
 		private Label _labelStatus;
 		private Camera2D _camera2D;
 		private TacticalView _tacticalView;
-		private bool _isTacticalMode = false;
+		private bool _isTacticalMode;
 
 		private MapData _loadedMapData;
 		private string _currentSaveSlotPath;
-		
+
 		private Node3D _globeContainer;
 		private MeshInstance3D _planetMesh;
 		private Camera3D _camera3D;
 		private Image _globeImage;
 		private ImageTexture _globeTexture;
-		
-		private bool _isDraggingGlobe = false;
-		private bool _wasDragging = false; // Detectar click vs drag
-		private float _globeScaleX;
-		private float _globeScaleY;
+		private ImageTexture _oceanMaskTexture;
+		private ShaderMaterial _planetShaderMat;
+		private ShaderMaterial _atmosShaderMat;
+		private MeshInstance3D _atmosMesh;
+		private ShaderMaterial _cloudShaderMat;
+		private MeshInstance3D _cloudMesh;
 
-		// ── Pinch-to-Zoom (dois dedos) ──
-		private bool _finger0Down = false;
-		private bool _finger1Down = false;
+		private bool _isDraggingGlobe;
+		private bool _wasDragging;
+		private float _globeScaleX = 1f;
+		private float _globeScaleY = 1f;
+
+		private bool _finger0Down;
+		private bool _finger1Down;
 		private Vector2 _finger0Pos = Vector2.Zero;
 		private Vector2 _finger1Pos = Vector2.Zero;
-		private float _pinchPrevDistance = 0f;
+		private float _pinchPrevDistance;
 
-			// ── Câmera Orbital ──
-		private float _cameraYaw = 0f;
+		private float _cameraYaw;
 		private float _cameraPitch = 0.3f;
 		private float _cameraDistance = 2.5f;
-		// ── Sol ──
-		private float _sunAngle = 0f;
-		private const float SUN_SPEED = 0.005f; // ~21 minutos para 1 dia completo
+		private float _sunAngle;
+		private Vector3 _sunDirection = Vector3.Right;
 		private MeshInstance3D _sunMesh;
+		private MeshInstance3D _moonMesh;
+		private ShaderMaterial _moonShaderMat;
+		private float _moonAngle;
 		private DirectionalLight3D _sunLight;
 		private ShaderMaterial _starShaderMat;
-		private float _starTime = 0f;
+		private float _starTime;
 
 		private TerritorySystem _territorySystem;
 		private VillageData _playerCapital;
-		private bool _isGameStarted = false;
-		private bool _showVillageNames = false;
+		private bool _isGameStarted;
+		private bool _showVillageNames;
 		private Button _btnToggleNames;
 
 		public override void _Ready()
@@ -62,130 +72,169 @@ namespace Jogomania.Core
 			_camera3D = GetNode<Camera3D>("GlobeContainer/Camera3D");
 			_camera3D.Current = true;
 
-			_camera2D = new Camera2D();
-			_camera2D.Enabled = false;
+			_camera2D = new Camera2D { Enabled = false };
 			AddChild(_camera2D);
 
-			_tacticalView = new TacticalView();
-			_tacticalView.Visible = false;
+			_tacticalView = new TacticalView { Visible = false };
 			AddChild(_tacticalView);
 
 			_labelStatus = GetNode<Label>("CanvasLayer/HUD/TopPanel/HBoxContainer/LabelStatus");
-			
 			_territorySystem = new TerritorySystem();
 			AddChild(_territorySystem);
 
 			SetupSpaceEnvironment();
+			SetupPlanetCollider();
+			InitializeMatch();
+			SetupMobileNameButton();
+		}
 
-			// Adicionar colisor para o Raycast
+		private void SetupPlanetCollider()
+		{
 			var staticBody = new StaticBody3D();
 			var collision = new CollisionShape3D();
-			var shape = new SphereShape3D();
-			shape.Radius = 1.0f; 
+			var shape = new SphereShape3D { Radius = 1.10f };
 			collision.Shape = shape;
 			staticBody.AddChild(collision);
 			_planetMesh.AddChild(staticBody);
+		}
 
-			InitializeMatch();
-
-			// Botão mobile para nomes de aldeias
-			_btnToggleNames = new Button();
-			_btnToggleNames.Text = "🏘 Nomes";
-			_btnToggleNames.CustomMinimumSize = new Vector2(90, 36);
-			_btnToggleNames.ToggleMode = true;
-			_btnToggleNames.Toggled += (on) => ToggleVillageNames(on);
+		private void SetupMobileNameButton()
+		{
+			_btnToggleNames = new Button
+			{
+				Text = "Nomes",
+				CustomMinimumSize = new Vector2(90, 36),
+				ToggleMode = true
+			};
+			_btnToggleNames.Toggled += ToggleVillageNames;
 
 			var topBar = GetNodeOrNull<HBoxContainer>("CanvasLayer/HUD/TopPanel/HBoxContainer");
-			if (topBar != null)
-				topBar.AddChild(_btnToggleNames);
+			topBar?.AddChild(_btnToggleNames);
 		}
 
 		private void SetupSpaceEnvironment()
 		{
-			var env = new Godot.Environment();
-			env.BackgroundMode = Godot.Environment.BGMode.Color;
-			env.BackgroundColor = new Color(0.0f, 0.0f, 0.0f, 1.0f);
-			// Luz ambiente baixa para ter contraste dia/noite
-			env.AmbientLightSource = Godot.Environment.AmbientSource.Color;
-			env.AmbientLightColor = new Color(0.05f, 0.06f, 0.12f);
-			env.AmbientLightEnergy = 0.3f;
-			// Bloom para o sol e atmosfera
-			env.GlowEnabled = true;
-			env.GlowIntensity = 1.0f;
-			env.GlowBloom = 0.5f;
-			env.GlowHdrThreshold = 0.7f;
-			env.GlowBlendMode = Godot.Environment.GlowBlendModeEnum.Additive;
+			var env = new Godot.Environment
+			{
+				BackgroundMode = Godot.Environment.BGMode.Color,
+				BackgroundColor = Colors.Black,
+				AmbientLightSource = Godot.Environment.AmbientSource.Color,
+				AmbientLightColor = new Color(0.025f, 0.03f, 0.06f),
+				AmbientLightEnergy = 0.12f,
+				GlowEnabled = true,
+				GlowIntensity = 1.1f,
+				GlowBloom = 0.65f,
+				GlowHdrThreshold = 0.65f,
+				GlowBlendMode = Godot.Environment.GlowBlendModeEnum.Additive
+			};
 			_camera3D.Environment = env;
 
-			// Atmosfera
-			var atmosMesh = new MeshInstance3D();
-			var sphere = new SphereMesh(); sphere.Radius = 1.05f; sphere.Height = 2.10f;
-			atmosMesh.Mesh = sphere;
-			var atmosMat = new ShaderMaterial();
-			var shader = GD.Load<Shader>("res://Shaders/Atmosphere.gdshader");
-			if (shader != null)
+			_atmosMesh = new MeshInstance3D();
+			var sphere = new SphereMesh { Radius = 1.058f, Height = 2.116f, RadialSegments = 128, Rings = 64 };
+			_atmosMesh.Mesh = sphere;
+			_atmosShaderMat = new ShaderMaterial();
+			Shader atmosShader = GD.Load<Shader>("res://Shaders/Atmosphere.gdshader");
+			if (atmosShader != null)
 			{
-				atmosMat.Shader = shader;
-				atmosMat.SetShaderParameter("atmosphere_color", new Color(0.3f, 0.6f, 1.0f, 1.0f));
-				atmosMat.SetShaderParameter("falloff", 3.0f);
-				atmosMat.SetShaderParameter("intensity", 1.2f);
+				_atmosShaderMat.Shader = atmosShader;
+				_atmosShaderMat.SetShaderParameter("atmosphere_color", new Color(0.34f, 0.62f, 1.0f, 1.0f));
+				_atmosShaderMat.SetShaderParameter("twilight_color", new Color(1.0f, 0.45f, 0.16f, 1.0f));
+				_atmosShaderMat.SetShaderParameter("falloff", 2.7f);
+				_atmosShaderMat.SetShaderParameter("intensity", 1.05f);
 			}
-			atmosMesh.MaterialOverride = atmosMat;
-			_globeContainer.AddChild(atmosMesh);
+			_atmosMesh.MaterialOverride = _atmosShaderMat;
+			_globeContainer.AddChild(_atmosMesh);
 
-			// Estrelas — 4096x2048 com 1px por estrela para pontos minúsculos
+			_cloudMesh = new MeshInstance3D();
+			_cloudMesh.Mesh = new SphereMesh { Radius = 1.035f, Height = 2.07f, RadialSegments = 128, Rings = 64 };
+			_cloudShaderMat = new ShaderMaterial();
+			Shader cloudShader = GD.Load<Shader>("res://Shaders/CloudLayer.gdshader");
+			if (cloudShader != null)
+			{
+				_cloudShaderMat.Shader = cloudShader;
+				_cloudShaderMat.SetShaderParameter("cloud_color", new Color(1f, 1f, 1f, 0.30f));
+			}
+			_cloudMesh.MaterialOverride = _cloudShaderMat;
+			_globeContainer.AddChild(_cloudMesh);
+
 			var starImg = Image.CreateEmpty(4096, 2048, false, Image.Format.Rgba8);
-			starImg.Fill(new Color(0,0,0,0));
-			var rng = new RandomNumberGenerator(); rng.Seed = 12345;
+			starImg.Fill(new Color(0, 0, 0, 0));
+			var rng = new RandomNumberGenerator { Seed = 12345 };
 			for (int i = 0; i < 2500; i++)
 			{
 				float b = rng.Randf() * 0.7f + 0.3f;
-				starImg.SetPixel(rng.RandiRange(0,4095), rng.RandiRange(0,2047), new Color(b,b,b,1));
+				starImg.SetPixel(rng.RandiRange(0, 4095), rng.RandiRange(0, 2047), new Color(b, b, b, 1));
 			}
-			var starTex = ImageTexture.CreateFromImage(starImg);
+
 			var starMesh = new MeshInstance3D();
-			var starSphere = new SphereMesh(); starSphere.Radius = 50f; starSphere.Height = 100f;
+			var starSphere = new SphereMesh { Radius = 50f, Height = 100f, RadialSegments = 96, Rings = 48 };
 			starMesh.Mesh = starSphere;
 			_starShaderMat = new ShaderMaterial();
-			var starShader = GD.Load<Shader>("res://Shaders/Starfield.gdshader");
-			if (starShader != null) { _starShaderMat.Shader = starShader; _starShaderMat.SetShaderParameter("star_texture", starTex); }
+			Shader starShader = GD.Load<Shader>("res://Shaders/Starfield.gdshader");
+			if (starShader != null)
+			{
+				_starShaderMat.Shader = starShader;
+				_starShaderMat.SetShaderParameter("star_texture", ImageTexture.CreateFromImage(starImg));
+			}
 			starMesh.MaterialOverride = _starShaderMat;
 			_globeContainer.AddChild(starMesh);
 
-			// Sol decorativo
 			_sunMesh = new MeshInstance3D();
-			var sunSphere = new SphereMesh(); sunSphere.Radius = 0.4f; sunSphere.Height = 0.8f;
+			var sunSphere = new SphereMesh { Radius = 0.18f, Height = 0.36f, RadialSegments = 48, Rings = 24 };
 			_sunMesh.Mesh = sunSphere;
-			var sunMat = new StandardMaterial3D();
-			sunMat.AlbedoColor = new Color(1f, 0.95f, 0.3f);
-			sunMat.EmissionEnabled = true;
-			sunMat.Emission = new Color(1f, 0.9f, 0.2f);
-			sunMat.EmissionEnergyMultiplier = 3f;
-			sunMat.ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded;
+			var sunMat = new StandardMaterial3D
+			{
+				AlbedoColor = new Color(1f, 0.95f, 0.3f),
+				EmissionEnabled = true,
+				Emission = new Color(1f, 0.9f, 0.2f),
+				EmissionEnergyMultiplier = 3f,
+				ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded
+			};
 			_sunMesh.MaterialOverride = sunMat;
 			_globeContainer.AddChild(_sunMesh);
 
-			// Luz direcional (dia/noite)
-			_sunLight = new DirectionalLight3D();
-			_sunLight.LightColor = new Color(1f, 0.95f, 0.85f);
-			_sunLight.LightEnergy = 1.8f;
+			_moonMesh = new MeshInstance3D();
+			_moonMesh.Mesh = new SphereMesh { Radius = 0.07f, Height = 0.14f, RadialSegments = 48, Rings = 24 };
+			_moonShaderMat = new ShaderMaterial();
+			Shader moonShader = GD.Load<Shader>("res://Shaders/MoonSurface.gdshader");
+			if (moonShader != null)
+			{
+				_moonShaderMat.Shader = moonShader;
+				_moonShaderMat.SetShaderParameter("moon_texture", ImageTexture.CreateFromImage(GenerateMoonTexture(24680)));
+				_moonShaderMat.SetShaderParameter("sun_direction", _sunDirection);
+			}
+			_moonMesh.MaterialOverride = _moonShaderMat;
+			_globeContainer.AddChild(_moonMesh);
+
+			_sunLight = new DirectionalLight3D
+			{
+				LightColor = new Color(1f, 0.95f, 0.85f),
+				LightEnergy = 2.0f
+			};
 			_globeContainer.AddChild(_sunLight);
 
 			UpdateSunPosition();
+			UpdateMoonPosition();
 			UpdateCameraOrbit();
 		}
 
 		public override void _Process(double delta)
 		{
-			if (!_isTacticalMode && _sunMesh != null)
+			if (_sunMesh != null)
 			{
-				_sunAngle += SUN_SPEED * (float)delta;
-				if (_sunAngle > Mathf.Pi * 2f) _sunAngle -= Mathf.Pi * 2f;
+				_sunAngle += SunSpeed * (float)delta;
+				if (_sunAngle > Mathf.Tau) _sunAngle -= Mathf.Tau;
+				_moonAngle += SunSpeed * 0.35f * (float)delta;
+				if (_moonAngle > Mathf.Tau) _moonAngle -= Mathf.Tau;
 				UpdateSunPosition();
-				// Twinkle das estrelas
+				UpdateMoonPosition();
 				_starTime += (float)delta;
 				if (_starShaderMat != null) _starShaderMat.SetShaderParameter("time_offset", _starTime);
+				if (_cloudShaderMat != null) _cloudShaderMat.SetShaderParameter("time_offset", _starTime);
 			}
+
+			if (_planetShaderMat != null) _planetShaderMat.SetShaderParameter("time_offset", _starTime);
+			_tacticalView.TimeOffset = _starTime;
 		}
 
 		private void UpdateCameraOrbit()
@@ -200,69 +249,133 @@ namespace Jogomania.Core
 
 		private void UpdateSunPosition()
 		{
-			float sx = 8f * Mathf.Cos(_sunAngle);
-			float sz = 8f * Mathf.Sin(_sunAngle);
-			var sunPos = new Vector3(sx, 1.5f, sz);
+			Vector3 sunPos = new Vector3(8f * Mathf.Cos(_sunAngle), 1.5f, 8f * Mathf.Sin(_sunAngle));
+			_sunDirection = sunPos.Normalized();
 			if (_sunMesh != null) _sunMesh.Position = sunPos;
 			if (_sunLight != null)
 			{
 				_sunLight.Position = sunPos;
-				if (sunPos.LengthSquared() > 0.001f) _sunLight.LookAt(Vector3.Zero, Vector3.Up);
+				_sunLight.LookAt(Vector3.Zero, Vector3.Up);
 			}
+
+			_planetShaderMat?.SetShaderParameter("sun_direction", _sunDirection);
+			_atmosShaderMat?.SetShaderParameter("sun_direction", _sunDirection);
+			_cloudShaderMat?.SetShaderParameter("sun_direction", _sunDirection);
+			_moonShaderMat?.SetShaderParameter("sun_direction", _sunDirection);
+			_tacticalView.SunDirection = _sunDirection;
 		}
 
-		private void EnterTacticalMode()
+		private void UpdateMoonPosition()
 		{
+			if (_moonMesh == null) return;
+			Vector3 moonPos = new Vector3(
+				8.0f * Mathf.Cos(_moonAngle + Mathf.Pi * 0.65f),
+				0.85f * Mathf.Sin(_moonAngle * 0.7f),
+				8.0f * Mathf.Sin(_moonAngle + Mathf.Pi * 0.65f)
+			);
+			_moonMesh.Position = moonPos;
+			if (moonPos.LengthSquared() > 0.001f)
+				_moonMesh.LookAt(Vector3.Zero, Vector3.Up);
+		}
+
+		private Image GenerateMoonTexture(int seed)
+		{
+			Image img = Image.CreateEmpty(256, 128, false, Image.Format.Rgba8);
+			var rng = new RandomNumberGenerator { Seed = (ulong)(uint)seed };
+			for (int y = 0; y < img.GetHeight(); y++)
+			{
+				for (int x = 0; x < img.GetWidth(); x++)
+				{
+					float shade = 0.58f + 0.08f * Mathf.Sin(x * 0.11f) * Mathf.Sin(y * 0.17f);
+					img.SetPixel(x, y, new Color(shade, shade, shade * 0.96f, 1f));
+				}
+			}
+
+			for (int i = 0; i < 22; i++)
+			{
+				Vector2 center = new Vector2(rng.RandiRange(0, 255), rng.RandiRange(0, 127));
+				float radius = rng.RandfRange(4f, 16f);
+				for (int y = Mathf.Max(0, (int)(center.Y - radius)); y < Mathf.Min(128, (int)(center.Y + radius)); y++)
+				{
+					for (int x = Mathf.Max(0, (int)(center.X - radius)); x < Mathf.Min(256, (int)(center.X + radius)); x++)
+					{
+						float d = center.DistanceTo(new Vector2(x, y)) / radius;
+						if (d > 1f) continue;
+						Color baseColor = img.GetPixel(x, y);
+						float crater = Mathf.Lerp(0.72f, 1.06f, Mathf.SmoothStep(0.55f, 1.0f, d));
+						img.SetPixel(x, y, new Color(baseColor.R * crater, baseColor.G * crater, baseColor.B * crater, 1f));
+					}
+				}
+			}
+
+			return img;
+		}
+
+		private void EnterTacticalMode(Vector2? focusScreenPos = null)
+		{
+			if (_loadedMapData == null) return;
+
+			Vector2 screenPos = focusScreenPos ?? GetViewportRect().Size * 0.5f;
+			Vector2I focusMap = TryGetMapPointFromScreen(screenPos, out Vector2I hitMap)
+				? hitMap
+				: PlanetMeshBuilder.SphereDirectionToMap(_camera3D.Position.Normalized(), _loadedMapData);
+
 			_isTacticalMode = true;
 			_camera3D.Current = false;
 			_camera2D.Enabled = true;
 			_camera2D.MakeCurrent();
-			_camera2D.Zoom = new Vector2(1, 1);
-			
+			_camera2D.Zoom = Vector2.One;
+			_camera2D.Position = Vector2.Zero;
+
+			_tacticalView.MapData = _loadedMapData;
+			_tacticalView.CenterX = focusMap.X;
+			_tacticalView.CenterY = focusMap.Y;
+			_tacticalView.ZoomLevel = TacticalInitialZoom;
+			_tacticalView.ShowVillageNames = _showVillageNames;
+			_tacticalView.SunDirection = _sunDirection;
+			_tacticalView.UseDayNight = true;
 			_tacticalView.Visible = true;
 			_globeContainer.Visible = false;
-
-			// Planeta fixo, câmera orbita - o ponto que a câmera vê é sua direção normalizada
-			Vector3 camDir = _camera3D.Position.Normalized();
-			float u = 0.5f + Mathf.Atan2(camDir.X, -camDir.Z) / (Mathf.Pi * 2.0f);
-			float v = Mathf.Acos(Mathf.Clamp(camDir.Y, -1f, 1f)) / Mathf.Pi;
-			int mapCX = Mathf.Clamp((int)(u * _loadedMapData.Width),  0, _loadedMapData.Width  - 1);
-			int mapCY = Mathf.Clamp((int)(v * _loadedMapData.Height), 0, _loadedMapData.Height - 1);
-
-			// CenterX/CenterY é a âncora: tile (CenterX, CenterY) fica em world (0, 0).
-			// A câmera começa em world (0, 0) => exibimos exatamente o tile central.
-			_tacticalView.CenterX = mapCX;
-			_tacticalView.CenterY = mapCY;
-			_tacticalView.ZoomLevel = 10; // Zoom inicial mais afastado
-			_tacticalView.ShowVillageNames = _showVillageNames;
-			_camera2D.Position = Vector2.Zero;
 			_tacticalView.QueueRedraw();
 		}
 
 		private void ExitTacticalMode()
 		{
-			// Calcular ponto do mapa que está no centro da tela tática
 			if (_loadedMapData != null)
 			{
-				float mapCenterX = _tacticalView.CenterX + _camera2D.Position.X / Mathf.Max(1, _tacticalView.ZoomLevel);
-				float mapCenterY = _tacticalView.CenterY + _camera2D.Position.Y / Mathf.Max(1, _tacticalView.ZoomLevel);
-				float normU = mapCenterX / _loadedMapData.Width;
-				float normV = mapCenterY / _loadedMapData.Height;
-				// Converter UV de mapa para yaw/pitch na esfera
-				float phi = (normU - 0.5f) * Mathf.Pi * 2.0f;
-				float theta = normV * Mathf.Pi;
-				// phi = longitude (yaw), theta = colatitude (pitch a partir do polo)
-				_cameraYaw = -phi; // negativo porque Atan2(X,-Z) inverte o sinal
-				_cameraPitch = Mathf.Pi * 0.5f - theta; // pitch = 90° - colatitude
-				_cameraPitch = Mathf.Clamp(_cameraPitch, -1.4f, 1.4f);
+				Vector2 mapCenter = _tacticalView.GetMapCenterFromCamera(_camera2D);
+				float mapCenterX = mapCenter.X;
+				float mapCenterY = mapCenter.Y;
+				Vector3 dir = PlanetMeshBuilder.MapToSphereDirection(mapCenterX, mapCenterY, _loadedMapData.Width, _loadedMapData.Height);
+				_cameraYaw = Mathf.Atan2(dir.X, dir.Z);
+				_cameraPitch = Mathf.Clamp(Mathf.Asin(dir.Y), -1.4f, 1.4f);
 			}
+
 			_isTacticalMode = false;
 			_camera3D.Current = true;
 			_camera2D.Enabled = false;
 			_tacticalView.Visible = false;
 			_globeContainer.Visible = true;
-			_cameraDistance = 2.5f;
+			_cameraDistance = TacticalEntryDistance + 0.02f;
 			UpdateCameraOrbit();
+		}
+
+		private bool TryGetMapPointFromScreen(Vector2 screenPos, out Vector2I mapPoint)
+		{
+			mapPoint = Vector2I.Zero;
+			if (_loadedMapData == null) return false;
+
+			var spaceState = _globeContainer.GetWorld3D().DirectSpaceState;
+			Vector3 from = _camera3D.ProjectRayOrigin(screenPos);
+			Vector3 to = from + _camera3D.ProjectRayNormal(screenPos) * 1000f;
+			var query = PhysicsRayQueryParameters3D.Create(from, to);
+			var result = spaceState.IntersectRay(query);
+			if (result.Count == 0) return false;
+
+			Vector3 hitPos = (Vector3)result["position"];
+			Vector3 localNormal = _planetMesh.ToLocal(hitPos).Normalized();
+			mapPoint = PlanetMeshBuilder.SphereDirectionToMap(localNormal, _loadedMapData);
+			return true;
 		}
 
 		private void ToggleVillageNames(bool on)
@@ -273,83 +386,111 @@ namespace Jogomania.Core
 
 		private async void InitializeMatch()
 		{
-			_currentSaveSlotPath = GameManager.Instance.GetPartidasDir() + "/Slot_1";
-			string currentMatchFile = _currentSaveSlotPath + "/save_atual.json";
+			_currentSaveSlotPath = Path.Combine(GameManager.Instance.GetPartidasDir(), "Slot_1");
+			string currentMatchFile = Path.Combine(_currentSaveSlotPath, "save_atual.json");
 
-			if (File.Exists(currentMatchFile))
-			{
-				_labelStatus.Text = "Carregando Mundo...";
-				
-				_loadedMapData = await Task.Run(() => 
-				{
-					string jsonString = File.ReadAllText(currentMatchFile);
-					var map = JsonSerializer.Deserialize<MapData>(jsonString);
-					if (map != null)
-					{
-						map.Dimensions = new Vector2I(map.Width, map.Height);
-						if (map.ChunksList != null)
-						{
-							foreach (var c in map.ChunksList)
-							{
-								c.ChunkPosition = new Vector2I(c.PosX, c.PosY);
-								map.Chunks[c.ChunkPosition] = c;
-							}
-						}
-					}
-					return map;
-				});
-
-				if (_loadedMapData != null)
-				{
-					RenderCurrentMapData();
-					_labelStatus.Text = "Pronto para Desembarcar!";
-					SpawnInitialCaravan();
-				}
-			}
-			else
+			if (!File.Exists(currentMatchFile))
 			{
 				_labelStatus.Text = "NENHUM MAPA ENCONTRADO!";
-				GD.PrintErr("Arquivo da partida não encontrado. O GameManager falhou na cópia?");
+				GD.PrintErr("Arquivo da partida nao encontrado.");
+				return;
 			}
+
+			_labelStatus.Text = "Carregando Mundo...";
+			_loadedMapData = await Task.Run(() => GameManager.LoadMap(currentMatchFile));
+			if (_loadedMapData == null)
+			{
+				_labelStatus.Text = "ERRO AO CARREGAR MAPA!";
+				return;
+			}
+
+			RenderCurrentMapData();
+			_labelStatus.Text = "Pronto para Desembarcar!";
+			SpawnInitialCaravan();
 		}
 
 		private async void RenderCurrentMapData()
 		{
 			_labelStatus.Text = "Costurando Globo 3D...";
-			_globeImage = await Task.Run(() => GenerateGlobeImage());
-			
+			_globeImage = await Task.Run(GenerateGlobeImage);
+			Image oceanMask = await Task.Run(GenerateOceanMaskImage);
+
 			_globeTexture = ImageTexture.CreateFromImage(_globeImage);
-			var material = new StandardMaterial3D();
-			material.AlbedoTexture = _globeTexture;
-			material.Roughness = 1.0f;
-			material.Metallic = 0.0f;
-			material.TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest; // Borda nítida estilo Unciv!
-			_planetMesh.SetSurfaceOverrideMaterial(0, material);
-			
+			_oceanMaskTexture = ImageTexture.CreateFromImage(oceanMask);
+			_planetMesh.Mesh = PlanetMeshBuilder.CreatePlanetMesh(_loadedMapData);
+
+			_planetShaderMat = new ShaderMaterial();
+			Shader shader = GD.Load<Shader>("res://Shaders/PlanetSurface.gdshader");
+			if (shader != null)
+			{
+				_planetShaderMat.Shader = shader;
+				_planetShaderMat.SetShaderParameter("planet_texture", _globeTexture);
+				_planetShaderMat.SetShaderParameter("ocean_mask", _oceanMaskTexture);
+				_planetShaderMat.SetShaderParameter("sun_direction", _sunDirection);
+			}
+			_planetMesh.SetSurfaceOverrideMaterial(0, _planetShaderMat);
+			ApplyMoonTexture();
+
 			_tacticalView.MapData = _loadedMapData;
+			_tacticalView.SunDirection = _sunDirection;
+		}
+
+		private void ApplyMoonTexture()
+		{
+			if (_moonShaderMat == null) return;
+
+			Image moonImage;
+			if (_loadedMapData.MoonTextureData != null && _loadedMapData.MoonTextureWidth > 0 && _loadedMapData.MoonTextureHeight > 0)
+			{
+				moonImage = Image.CreateFromData(_loadedMapData.MoonTextureWidth, _loadedMapData.MoonTextureHeight, false, Image.Format.Rgba8, _loadedMapData.MoonTextureData);
+			}
+			else
+			{
+				moonImage = GenerateMoonTexture((_loadedMapData.MapName ?? "moon").GetHashCode());
+				_loadedMapData.MoonTextureWidth = moonImage.GetWidth();
+				_loadedMapData.MoonTextureHeight = moonImage.GetHeight();
+				_loadedMapData.MoonTextureData = moonImage.GetData();
+			}
+
+			_moonShaderMat.SetShaderParameter("moon_texture", ImageTexture.CreateFromImage(moonImage));
 		}
 
 		private Image GenerateGlobeImage()
 		{
 			int mapW = _loadedMapData.Dimensions.X;
 			int mapH = _loadedMapData.Dimensions.Y;
-			
 			int globeW = System.Math.Min(mapW, 2048);
 			int globeH = System.Math.Min(mapH, 1024);
-			
 			_globeScaleX = (float)globeW / mapW;
 			_globeScaleY = (float)globeH / mapH;
 
 			Image img = Image.CreateEmpty(globeW, globeH, false, Image.Format.Rgba8);
-
 			for (int y = 0; y < globeH; y++)
 			{
 				for (int x = 0; x < globeW; x++)
 				{
-					int realX = (int)(x / _globeScaleX);
-					int realY = (int)(y / _globeScaleY);
-
+					int realX = Mathf.Clamp((int)(x / _globeScaleX), 0, mapW - 1);
+					int realY = Mathf.Clamp((int)(y / _globeScaleY), 0, mapH - 1);
 					EvaluateAndPaintPixelDirect(realX, realY, x, y, img);
+				}
+			}
+			return img;
+		}
+
+		private Image GenerateOceanMaskImage()
+		{
+			int w = _globeImage.GetWidth();
+			int h = _globeImage.GetHeight();
+			Image img = Image.CreateEmpty(w, h, false, Image.Format.Rgba8);
+			for (int y = 0; y < h; y++)
+			{
+				for (int x = 0; x < w; x++)
+				{
+					int mapX = Mathf.Clamp((int)(x / _globeScaleX), 0, _loadedMapData.Width - 1);
+					int mapY = Mathf.Clamp((int)(y / _globeScaleY), 0, _loadedMapData.Height - 1);
+					byte terrain = PlanetMeshBuilder.GetTerrainAt(_loadedMapData, mapX, mapY);
+					float mask = PlanetMeshBuilder.IsOcean(terrain) ? 1f : 0f;
+					img.SetPixel(x, y, new Color(mask, mask, mask, 1f));
 				}
 			}
 			return img;
@@ -358,14 +499,11 @@ namespace Jogomania.Core
 		public void UpdateGlobePixel(int mapX, int mapY, byte territoryId)
 		{
 			if (_globeImage == null || _globeTexture == null) return;
-			
-			// Atualiza o pixel atual e os 4 vizinhos (para recalcular bordas que viraram interior)
 			EvaluateAndPaintPixelDirect(mapX, mapY, (int)(mapX * _globeScaleX), (int)(mapY * _globeScaleY), _globeImage);
 			EvaluateAndPaintPixelDirect(mapX + 1, mapY, (int)((mapX + 1) * _globeScaleX), (int)(mapY * _globeScaleY), _globeImage);
 			EvaluateAndPaintPixelDirect(mapX - 1, mapY, (int)((mapX - 1) * _globeScaleX), (int)(mapY * _globeScaleY), _globeImage);
 			EvaluateAndPaintPixelDirect(mapX, mapY + 1, (int)(mapX * _globeScaleX), (int)((mapY + 1) * _globeScaleY), _globeImage);
 			EvaluateAndPaintPixelDirect(mapX, mapY - 1, (int)(mapX * _globeScaleX), (int)((mapY - 1) * _globeScaleY), _globeImage);
-			
 			_globeTexture.Update(_globeImage);
 		}
 
@@ -375,9 +513,7 @@ namespace Jogomania.Core
 			int cx = x / ChunkData.CHUNK_SIZE;
 			int cy = y / ChunkData.CHUNK_SIZE;
 			if (_loadedMapData.Chunks.TryGetValue(new Vector2I(cx, cy), out ChunkData chunk))
-			{
 				return chunk.TerritoryMap[(y % ChunkData.CHUNK_SIZE) * ChunkData.CHUNK_SIZE + (x % ChunkData.CHUNK_SIZE)];
-			}
 			return 0;
 		}
 
@@ -388,122 +524,124 @@ namespace Jogomania.Core
 
 			int chunkX = mapX / ChunkData.CHUNK_SIZE;
 			int chunkY = mapY / ChunkData.CHUNK_SIZE;
-			Vector2I chunkPos = new Vector2I(chunkX, chunkY);
-			
-			if (_loadedMapData.Chunks.TryGetValue(chunkPos, out ChunkData chunk))
+			if (!_loadedMapData.Chunks.TryGetValue(new Vector2I(chunkX, chunkY), out ChunkData chunk))
 			{
-				int localX = mapX % ChunkData.CHUNK_SIZE;
-				int localY = mapY % ChunkData.CHUNK_SIZE;
-				byte terrainType = chunk.TerrainMap[localY * ChunkData.CHUNK_SIZE + localX];
-				byte ownerId = chunk.TerritoryMap[localY * ChunkData.CHUNK_SIZE + localX];
-				
-				Color terrainColor = GetTerrainColor(terrainType);
+				img.SetPixel(globeX, globeY, Colors.Black);
+				return;
+			}
 
-				if (ownerId > 0 && ownerId != 255)
-				{
-					Color terrColor = GetTerritoryColor(ownerId);
-					
-					bool isBorder = false;
-					int[] dx = { 1, -1, 0, 0 };
-					int[] dy = { 0, 0, 1, -1 };
-					for (int i=0; i<4; i++)
-					{
-						byte neighborOwner = GetOwnerAt(mapX + dx[i], mapY + dy[i]);
-						// Se o vizinho for oceano (owner == 0 e terreno de água), consideramos borda também?
-						// Age of History costuma desenhar borda na costa marítima também.
-						if (neighborOwner != ownerId && neighborOwner != 255) 
-						{
-							isBorder = true;
-							break;
-						}
-					}
+			int localX = mapX % ChunkData.CHUNK_SIZE;
+			int localY = mapY % ChunkData.CHUNK_SIZE;
+			int flatIndex = localY * ChunkData.CHUNK_SIZE + localX;
+			byte terrainType = chunk.TerrainMap[flatIndex];
+			byte ownerId = chunk.TerritoryMap[flatIndex];
+			Color terrainColor = GetTerrainColor(terrainType);
 
-					if (isBorder)
+			if (ownerId > 0 && ownerId != 255)
+			{
+				bool isBorder = false;
+				int[] dx = { 1, -1, 0, 0 };
+				int[] dy = { 0, 0, 1, -1 };
+				for (int i = 0; i < 4; i++)
+				{
+					byte neighborOwner = GetOwnerAt(mapX + dx[i], mapY + dy[i]);
+					if (neighborOwner != ownerId && neighborOwner != 255)
 					{
-						// Linha Cinza Fina para Fronteiras
-						img.SetPixel(globeX, globeY, new Color(0.2f, 0.2f, 0.2f, 1.0f));
-					}
-					else
-					{
-						if (ownerId == 1) 
-						{
-							// Azul translúcido para o Jogador
-							img.SetPixel(globeX, globeY, terrainColor.Lerp(terrColor, 0.35f));
-						}
-						else
-						{
-							// Apenas o terreno natural para outras aldeias/nações não conquistadas
-							img.SetPixel(globeX, globeY, terrainColor);
-						}
+						isBorder = true;
+						break;
 					}
 				}
-				else if (ownerId == 255)
-				{
-					img.SetPixel(globeX, globeY, new Color(1.0f, 1.0f, 0.0f, 1.0f)); // Aldeia Neutra
-				}
-				else
-				{
-					img.SetPixel(globeX, globeY, terrainColor);
-				}
+
+				img.SetPixel(globeX, globeY, isBorder ? new Color(0.18f, 0.18f, 0.18f, 1f) :
+					ownerId == 1 ? terrainColor.Lerp(GetTerritoryColor(ownerId), 0.35f) : terrainColor);
+			}
+			else if (ownerId == 255)
+			{
+				img.SetPixel(globeX, globeY, new Color(1.0f, 0.9f, 0.05f, 1.0f));
 			}
 			else
 			{
-				img.SetPixel(globeX, globeY, new Color(0,0,0));
+				img.SetPixel(globeX, globeY, terrainColor);
 			}
 		}
 
 		public static Color GetTerrainColor(byte type)
 		{
-			switch (type)
+			return type switch
 			{
-				case 0: return new Color(0.0f, 0.1f, 0.5f);
-				case 1: return new Color(0.2f, 0.4f, 0.8f);
-				case 2: return new Color(0.9f, 0.8f, 0.5f);
-				case 3: return new Color(0.3f, 0.7f, 0.2f);
-				case 4: return new Color(0.1f, 0.5f, 0.1f);
-				case 5: return new Color(0.05f, 0.3f, 0.05f);
-				case 6: return new Color(0.7f, 0.6f, 0.3f);
-				case 7: return new Color(0.9f, 0.7f, 0.2f);
-				case 8: return new Color(0.7f, 0.8f, 0.8f);
-				case 9: return new Color(0.9f, 0.95f, 1.0f);
-				case 10: return new Color(0.5f, 0.5f, 0.5f);
-				case 11: return new Color(0.8f, 0.8f, 0.8f);
-				default: return new Color(0,0,0);
-			}
+				0 => new Color(0.0f, 0.09f, 0.42f),
+				1 => new Color(0.06f, 0.28f, 0.68f),
+				2 => new Color(0.88f, 0.78f, 0.50f),
+				3 => new Color(0.30f, 0.66f, 0.22f),
+				4 => new Color(0.08f, 0.42f, 0.10f),
+				5 => new Color(0.03f, 0.26f, 0.05f),
+				6 => new Color(0.67f, 0.56f, 0.30f),
+				7 => new Color(0.86f, 0.64f, 0.18f),
+				8 => new Color(0.58f, 0.70f, 0.70f),
+				9 => new Color(0.90f, 0.95f, 1.0f),
+				10 => new Color(0.45f, 0.45f, 0.44f),
+				11 => new Color(0.74f, 0.74f, 0.74f),
+				_ => Colors.Black
+			};
 		}
 
 		public static Color GetTerritoryColor(byte ownerId)
 		{
-			if (ownerId == 255) return new Color(1.0f, 1.0f, 0.0f, 1.0f); // Amarelo (Aldeia Neutra)
-			if (ownerId == 1) return new Color(0.2f, 0.4f, 0.9f, 1.0f); // Azul Player
-			if (ownerId == 2) return new Color(0.9f, 0.2f, 0.2f, 1.0f); // Vermelho Inimigo
-			return new Color(1, 1, 1, 1.0f);
+			if (ownerId == 255) return new Color(1.0f, 1.0f, 0.0f, 1.0f);
+			if (ownerId == 1) return new Color(0.2f, 0.4f, 0.9f, 1.0f);
+			if (ownerId == 2) return new Color(0.9f, 0.2f, 0.2f, 1.0f);
+			return Colors.White;
 		}
 
 		public override void _UnhandledInput(InputEvent @event)
-	{
-		// Tecla N — mostrar/ocultar nomes (Tab é reservado para navegação de UI)
-		if (@event is InputEventKey key && key.Pressed && !key.Echo)
 		{
-			if (key.Keycode == Key.N)
+			if (@event is InputEventKey key && key.Pressed && !key.Echo)
 			{
-				_showVillageNames = !_showVillageNames;
-				_tacticalView.ShowVillageNames = _showVillageNames;
-				if (_btnToggleNames != null) _btnToggleNames.ButtonPressed = _showVillageNames;
-				return;
+				if (key.Keycode == Key.N)
+				{
+					_showVillageNames = !_showVillageNames;
+					_tacticalView.ShowVillageNames = _showVillageNames;
+					if (_btnToggleNames != null) _btnToggleNames.ButtonPressed = _showVillageNames;
+					return;
+				}
+				if (key.Keycode == Key.Escape && _isTacticalMode)
+				{
+					ExitTacticalMode();
+					return;
+				}
 			}
-			if (key.Keycode == Key.Escape && _isTacticalMode)
+
+			if (@event is InputEventMouseButton mouseBtn)
 			{
-				ExitTacticalMode();
-				return;
+				HandleMouseButton(mouseBtn);
+			}
+			else if (@event is InputEventMouseMotion mouseMotion)
+			{
+				if (_isDraggingGlobe) HandlePan(mouseMotion.Relative, false);
+			}
+			else if (@event is InputEventScreenTouch touchEvent)
+			{
+				HandleScreenTouch(touchEvent);
+			}
+			else if (@event is InputEventScreenDrag dragEvent)
+			{
+				if (dragEvent.Index == 0) _finger0Pos = dragEvent.Position;
+				else if (dragEvent.Index == 1) _finger1Pos = dragEvent.Position;
+
+				if (_finger0Down && _finger1Down) HandlePinch();
+				else HandlePan(dragEvent.Relative, true);
 			}
 		}
 
-		if (@event is InputEventMouseButton mouseBtn)
+		private void HandleMouseButton(InputEventMouseButton mouseBtn)
 		{
 			if (mouseBtn.ButtonIndex == MouseButton.Left)
 			{
-				if (mouseBtn.Pressed) { _isDraggingGlobe = true; _wasDragging = false; }
+				if (mouseBtn.Pressed)
+				{
+					_isDraggingGlobe = true;
+					_wasDragging = false;
+				}
 				else
 				{
 					_isDraggingGlobe = false;
@@ -516,15 +654,16 @@ namespace Jogomania.Core
 			{
 				if (!_isTacticalMode)
 				{
-					_cameraDistance = Mathf.Max(1.08f, _cameraDistance - 0.15f);
+					_cameraDistance = Mathf.Max(TacticalEntryDistance, _cameraDistance - 0.15f);
 					UpdateCameraOrbit();
-					if (_cameraDistance <= 1.08f) EnterTacticalMode();
+					if (_cameraDistance <= TacticalEntryDistance) EnterTacticalMode(mouseBtn.Position);
 				}
 				else
 				{
-					int oldZu = _tacticalView.ZoomLevel;
-					int newZu = Mathf.Min(128, (int)(oldZu * 1.25f));
-					if (newZu != oldZu) { _camera2D.Position *= (float)newZu / oldZu; _tacticalView.ZoomLevel = newZu; }
+					float oldZoom = _tacticalView.ZoomLevel;
+					float newZoom = Mathf.Min(128f, oldZoom * 1.25f);
+					_camera2D.Position *= newZoom / oldZoom;
+					_tacticalView.ZoomLevel = newZoom;
 				}
 			}
 			else if (mouseBtn.ButtonIndex == MouseButton.WheelDown && mouseBtn.Pressed)
@@ -536,24 +675,29 @@ namespace Jogomania.Core
 				}
 				else
 				{
-					int oldZd = _tacticalView.ZoomLevel;
-					int nz = (int)(oldZd * 0.8f);
-					if (nz < 8) ExitTacticalMode();
-					else { _camera2D.Position *= (float)nz / oldZd; _tacticalView.ZoomLevel = nz; }
+					float oldZoom = _tacticalView.ZoomLevel;
+					float newZoom = oldZoom * 0.8f;
+					if (newZoom < TacticalExitZoom) ExitTacticalMode();
+					else
+					{
+						_camera2D.Position *= newZoom / oldZoom;
+						_tacticalView.ZoomLevel = newZoom;
+					}
 				}
 			}
 		}
-		else if (@event is InputEventMouseMotion mouseMotion)
-		{
-			if (_isDraggingGlobe) HandlePan(mouseMotion.Relative);
-		}
-		else if (@event is InputEventScreenTouch touchEvent)
+
+		private void HandleScreenTouch(InputEventScreenTouch touchEvent)
 		{
 			if (touchEvent.Index == 0)
 			{
 				_finger0Down = touchEvent.Pressed;
 				_finger0Pos = touchEvent.Position;
-				if (touchEvent.Pressed) { _isDraggingGlobe = true; _wasDragging = false; }
+				if (touchEvent.Pressed)
+				{
+					_isDraggingGlobe = true;
+					_wasDragging = false;
+				}
 				else
 				{
 					if (!_finger1Down && !_wasDragging && !_isGameStarted && !_isTacticalMode)
@@ -573,98 +717,84 @@ namespace Jogomania.Core
 					_isDraggingGlobe = false;
 					_wasDragging = true;
 				}
-				else _pinchPrevDistance = 0f;
+				else
+				{
+					_pinchPrevDistance = 0f;
+				}
 			}
 		}
-		else if (@event is InputEventScreenDrag dragEvent)
-		{
-			if (dragEvent.Index == 0) _finger0Pos = dragEvent.Position;
-			else if (dragEvent.Index == 1) _finger1Pos = dragEvent.Position;
-			if (_finger0Down && _finger1Down) HandlePinch();
-			else HandlePan(dragEvent.Relative);
-		}
-	}
 
-	private void HandlePan(Vector2 relative)
-	{
-		if (relative.LengthSquared() > 4.0f) _wasDragging = true;
-		if (!_isTacticalMode)
+		private void HandlePan(Vector2 relative, bool fromTouch)
 		{
-			// Câmera orbita o planeta — planeta fica fixo (dia/noite independente)
-			_cameraYaw   -= relative.X * 0.005f;
-			_cameraPitch  = Mathf.Clamp(_cameraPitch + relative.Y * 0.005f, -1.4f, 1.4f);
-			UpdateCameraOrbit();
-		}
-		else
-		{
-			_camera2D.Position -= relative * (_camera2D.Zoom.X > 0 ? 1.0f / _camera2D.Zoom.X : 1.0f);
-		}
-	}
-
-	/// <summary>Processa o gesto de pinça (dois dedos) para dar zoom.</summary>
-	private void HandlePinch()
-	{
-		float currentDist = _finger0Pos.DistanceTo(_finger1Pos);
-		if (_pinchPrevDistance <= 0f) { _pinchPrevDistance = currentDist; return; }
-		float delta = currentDist - _pinchPrevDistance;
-		_pinchPrevDistance = currentDist;
-		if (Mathf.Abs(delta) < 2f) return;
-		if (!_isTacticalMode)
-		{
-			_cameraDistance = Mathf.Clamp(_cameraDistance - delta * 0.005f, 1.08f, 5.0f);
-			UpdateCameraOrbit();
-			if (_cameraDistance <= 1.08f) EnterTacticalMode();
-		}
-		else
-		{
-			float zf = 1f + delta * 0.008f;
-			int nz = (int)(_tacticalView.ZoomLevel * zf);
-			if (nz < 8) ExitTacticalMode();
-			else _tacticalView.ZoomLevel = Mathf.Clamp(nz, 8, 128);
-		}
-	}
-	private void SelectStartingVillage(Vector2 screenPos)
-		{
-			var spaceState = _globeContainer.GetWorld3D().DirectSpaceState;
-			var from = _camera3D.ProjectRayOrigin(screenPos);
-			var to = from + _camera3D.ProjectRayNormal(screenPos) * 1000f;
-			var query = PhysicsRayQueryParameters3D.Create(from, to);
-			var result = spaceState.IntersectRay(query);
-			
-			if (result.Count > 0)
+			if (relative.LengthSquared() > 4.0f) _wasDragging = true;
+			if (!_isTacticalMode)
 			{
-				Vector3 hitPos = (Vector3)result["position"];
-				Vector3 localPos = _planetMesh.ToLocal(hitPos).Normalized();
-					
-				float u = 0.5f + Mathf.Atan2(localPos.X, -localPos.Z) / (Mathf.Pi * 2.0f);
-				float v = Mathf.Acos(localPos.Y) / Mathf.Pi;
-					
-				int mapX = Mathf.Clamp((int)(u * _loadedMapData.Width), 0, _loadedMapData.Width - 1);
-				int mapY = Mathf.Clamp((int)(v * _loadedMapData.Height), 0, _loadedMapData.Height - 1);
-				
-				Data.VillageData closest = null;
-				float minDist = float.MaxValue;
-				
-				foreach(var village in _loadedMapData.Villages)
+				_cameraYaw -= relative.X * 0.005f;
+				float verticalSign = fromTouch ? -1f : 1f;
+				_cameraPitch = Mathf.Clamp(_cameraPitch + relative.Y * 0.005f * verticalSign, -1.4f, 1.4f);
+				UpdateCameraOrbit();
+			}
+			else
+			{
+				_camera2D.Position -= relative;
+			}
+		}
+
+		private void HandlePinch()
+		{
+			float currentDist = _finger0Pos.DistanceTo(_finger1Pos);
+			if (_pinchPrevDistance <= 0f)
+			{
+				_pinchPrevDistance = currentDist;
+				return;
+			}
+
+			float delta = currentDist - _pinchPrevDistance;
+			_pinchPrevDistance = currentDist;
+			if (Mathf.Abs(delta) < 2f) return;
+
+			Vector2 pinchCenter = (_finger0Pos + _finger1Pos) * 0.5f;
+			if (!_isTacticalMode)
+			{
+				_cameraDistance = Mathf.Clamp(_cameraDistance - delta * 0.005f, TacticalEntryDistance, 5.0f);
+				UpdateCameraOrbit();
+				if (_cameraDistance <= TacticalEntryDistance) EnterTacticalMode(pinchCenter);
+			}
+			else
+			{
+				float oldZoom = _tacticalView.ZoomLevel;
+				float newZoom = oldZoom * (1f + delta * 0.008f);
+				if (newZoom < TacticalExitZoom) ExitTacticalMode();
+				else
 				{
-					float dist = (village.X - mapX)*(village.X - mapX) + (village.Y - mapY)*(village.Y - mapY);
-					if (dist < minDist)
-					{
-						minDist = dist;
-						closest = village;
-					}
-				}
-				
-				if (closest != null)
-				{
-					StartGameAs(closest);
+					newZoom = Mathf.Clamp(newZoom, TacticalExitZoom, 128f);
+					_camera2D.Position *= newZoom / oldZoom;
+					_tacticalView.ZoomLevel = newZoom;
 				}
 			}
+		}
+
+		private void SelectStartingVillage(Vector2 screenPos)
+		{
+			if (!TryGetMapPointFromScreen(screenPos, out Vector2I mapPoint)) return;
+
+			VillageData closest = null;
+			float minDist = float.MaxValue;
+			foreach (VillageData village in _loadedMapData.Villages)
+			{
+				float dist = (village.X - mapPoint.X) * (village.X - mapPoint.X) + (village.Y - mapPoint.Y) * (village.Y - mapPoint.Y);
+				if (dist < minDist)
+				{
+					minDist = dist;
+					closest = village;
+				}
+			}
+
+			if (closest != null) StartGameAs(closest);
 		}
 
 		private void SpawnInitialCaravan()
 		{
-			// Substituído pelo sistema de selecionar aldeia nativa
 			_labelStatus.Text = "Selecione uma Aldeia Amarela clicando nela!";
 		}
 
@@ -673,65 +803,41 @@ namespace Jogomania.Core
 			_playerCapital = village;
 			_playerCapital.OwnerId = 1;
 			_isGameStarted = true;
-			
 			GetNode<Control>("CanvasLayer/HUD/BottomPanel").Visible = false;
-			_labelStatus.Text = $"Você assumiu o controle de {village.Name}! Expansão Iniciada.";
-			
+			_labelStatus.Text = $"Voce assumiu o controle de {village.Name}! Expansao iniciada.";
 			_territorySystem.StartSimulation(_loadedMapData, UpdateGlobePixel);
 			_territorySystem.RegisterVillage(new Vector2I(village.X, village.Y), 1);
-			
-			GD.Print($"Jogo Iniciado na aldeia {village.Name}");
-			
-			// Colocar um Pin 3D na Aldeia (Removido o amarelão)
-			// SpawnVillagePin(village);
 		}
 
 		private Vector3 GetSpherePosition(int mapX, int mapY)
 		{
-			float normX = (float)mapX / _loadedMapData.Width;
-			float normY = (float)mapY / _loadedMapData.Height;
-			
-			float theta = normY * Mathf.Pi;
-			float phi = normX * Mathf.Pi * 2.0f;
-			
-			float x = Mathf.Sin(theta) * Mathf.Cos(phi);
-			float y = Mathf.Cos(theta);
-			float z = Mathf.Sin(theta) * Mathf.Sin(phi);
-			
-			return new Vector3(x, y, z).Normalized();
+			return PlanetMeshBuilder.MapToSphereDirection(mapX, mapY, _loadedMapData.Width, _loadedMapData.Height);
 		}
 
 		private void SpawnVillagePin(VillageData village)
 		{
 			Vector3 pos3D = GetSpherePosition(village.X, village.Y);
-			
-			var pinSprite = new Sprite3D();
-			pinSprite.Billboard = BaseMaterial3D.BillboardModeEnum.Enabled;
-			pinSprite.PixelSize = 0.003f;
-			
-			// Criar uma textura provisória colorida (Bandeira)
+			var pinSprite = new Sprite3D
+			{
+				Billboard = BaseMaterial3D.BillboardModeEnum.Enabled,
+				PixelSize = 0.003f,
+				Position = pos3D * 1.03f
+			};
 			Image img = Image.CreateEmpty(32, 32, false, Image.Format.Rgba8);
-			img.Fill(new Color(1f, 1f, 0f, 1f)); // Ponto Amarelo Neon da Capital
+			img.Fill(new Color(1f, 1f, 0f, 1f));
 			pinSprite.Texture = ImageTexture.CreateFromImage(img);
-			
-			// Elevar um pouco (2%) acima da superfície para não clipar no chão
-			pinSprite.Position = pos3D * 1.02f;
-			
 			_planetMesh.AddChild(pinSprite);
 		}
 
 		private void OnBtnSettlePressed()
 		{
-			// Obsoleto. Ocultado da UI
 		}
 
 		private void SaveMatch()
 		{
 			if (_loadedMapData == null) return;
-			string currentMatchFile = _currentSaveSlotPath + "/save_atual.json";
-			_loadedMapData.ChunksList = new List<ChunkData>(_loadedMapData.Chunks.Values);
-			string jsonString = JsonSerializer.Serialize(_loadedMapData, new JsonSerializerOptions { WriteIndented = false });
-			File.WriteAllText(currentMatchFile, jsonString);
+			string currentMatchFile = Path.Combine(_currentSaveSlotPath, "save_atual.json");
+			GameManager.SaveMap(currentMatchFile, _loadedMapData);
 		}
 
 		private void OnBtnBackPressed()

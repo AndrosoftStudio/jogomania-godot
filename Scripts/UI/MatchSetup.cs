@@ -1,4 +1,4 @@
-using Godot;
+﻿using Godot;
 using System.IO;
 using Jogomania.Core;
 
@@ -15,20 +15,14 @@ namespace Jogomania.UI
             _optionMap = GetNode<OptionButton>("MarginContainer/VBoxMain/PanelContainer/VBoxSettings/HBoxMap/OptionMap");
             _spinBoxAI = GetNode<SpinBox>("MarginContainer/VBoxMain/PanelContainer/VBoxSettings/HBoxAI/SpinBoxAI");
             _optionAggro = GetNode<OptionButton>("MarginContainer/VBoxMain/PanelContainer/VBoxSettings/HBoxAggressiveness/OptionAggro");
-
             LoadAvailableMaps();
         }
 
         private void LoadAvailableMaps()
         {
             _optionMap.Clear();
-            string dir = GameManager.Instance.GetMapsDir();
-
-            string[] files = Directory.GetFiles(dir, "*.json");
-            foreach (string file in files)
-            {
+            foreach (string file in GameManager.Instance.GetSavedMapFiles())
                 _optionMap.AddItem(Path.GetFileName(file));
-            }
 
             if (_optionMap.ItemCount == 0)
             {
@@ -38,22 +32,16 @@ namespace Jogomania.UI
             }
         }
 
-        private void OnBtnBackPressed()
-        {
-            GameManager.Instance?.GoToMainMenu();
-        }
+        private void OnBtnBackPressed() => GameManager.Instance?.GoToMainMenu();
 
         private void OnBtnStartPressed()
         {
+            if (_optionMap.Disabled || _optionMap.Selected < 0) return;
             string selectedMapName = _optionMap.GetItemText(_optionMap.Selected);
-            string mapPath = GameManager.Instance.GetMapsDir() + "/" + selectedMapName;
-
+            string mapPath = Path.Combine(GameManager.Instance.GetMapsDir(), selectedMapName);
             int aiCount = (int)_spinBoxAI.Value;
             int aggroLevel = _optionAggro.Selected;
-
-            // TODO: Passar os parâmetros de IA e Mapa para o GameManager para que a Cena Game leia.
             GD.Print($"Iniciando Jogo: Mapa={selectedMapName}, IAs={aiCount}, Agressividade={aggroLevel}");
-            
             GameManager.Instance?.StartSoloGame(mapPath, aiCount, aggroLevel);
         }
     }
