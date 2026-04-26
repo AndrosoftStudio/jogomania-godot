@@ -26,10 +26,20 @@ namespace Jogomania.Core
 
         public override void _Ready()
         {
-            GD.Print("GameManager Inicializado.");
             // Garante que os diretórios existam na primeira execução
             EnsureDir(GetMapsDir());
             EnsureDir(GetPartidasDir());
+
+            // ── Escalonamento Automático de UI para telas de alta densidade (2K, 4K) ──
+            // Aplica apenas em dispositivos móveis para não afetar o editor/PC.
+            // Baseline: 160 DPI (Android mdpi). Poco X6 Pro ≈ 453 DPI → scale ≈ 2.83x
+            if (OS.GetName() == "Android" || OS.GetName() == "iOS")
+            {
+                int screenDpi = DisplayServer.ScreenGetDpi();
+                float scaleFactor = Mathf.Clamp(screenDpi / 240f, 1.0f, 2.5f); // 240dpi = hdpi baseline
+                GetTree().Root.ContentScaleFactor = scaleFactor;
+                GD.Print($"[UI Scale] DPI={screenDpi}, ScaleFactor={scaleFactor:F2}x");
+            }
         }
 
         // ── Helpers de I/O cross-platform ──────────────────────────────────────────
@@ -103,21 +113,18 @@ namespace Jogomania.Core
 
         public void StartSoloGame()
         {
-            GD.Print("Iniciando Modo Solo (Continuar)...");
             GetTree().ChangeSceneToFile("res://Scenes/Game.tscn");
         }
 
         public void StartSoloGame(string mapPath, int aiCount, int aggroLevel)
         {
-            GD.Print($"Iniciando Novo Jogo Solo. Mapa: {mapPath}, IAs: {aiCount}");
-            
             CurrentMapPath = mapPath;
             CurrentAICount = aiCount;
             CurrentAggroLevel = aggroLevel;
 
             string matchDir = GetPartidasDir() + "/Slot_1";
             EnsureDir(matchDir);
-            
+
             string matchFile = matchDir + "/save_atual.json";
             if (File.Exists(mapPath))
             {
@@ -139,19 +146,16 @@ namespace Jogomania.Core
 
         public void StartOnlineGame()
         {
-            GD.Print("Iniciando Modo Online...");
             GetTree().ChangeSceneToFile("res://Scenes/Game.tscn");
         }
 
         public void OpenMapEditor()
         {
-            GD.Print("Abrindo Editor de Mapas...");
             GetTree().ChangeSceneToFile("res://Scenes/MapEditor.tscn");
         }
 
         public void GoToMainMenu()
         {
-            GD.Print("Voltando ao Menu Principal...");
             GetTree().ChangeSceneToFile("res://Scenes/MainMenu.tscn");
         }
     }

@@ -44,6 +44,13 @@ namespace Jogomania.Editor
         private bool _isPainting = false;
         private float _generationProgress = 0f;
 
+        // ── Pinch-to-Zoom (dois dedos) ──
+        private bool _finger0Down = false;
+        private bool _finger1Down = false;
+        private Vector2 _finger0Pos = Vector2.Zero;
+        private Vector2 _finger1Pos = Vector2.Zero;
+        private float _pinchPrevDistance = 0f;
+
         public override void _Ready()
         {
             _previewTexture = GetNode<TextureRect>("UILayer/UIControl/VBoxContainer/PreviewTexture");
@@ -59,11 +66,13 @@ namespace Jogomania.Editor
             _camera2D = GetNode<Camera2D>("Camera2D");
 
             _globeContainer = GetNode<Node3D>("GlobeContainer");
-            _globeContainer.Position = new Vector3(1.0f, 0, 0); // Globo mais deslocado para direita
+            _globeContainer.Position = new Vector3(1.0f, 0, 0);
 
             _planetMesh = GetNode<MeshInstance3D>("GlobeContainer/PlanetMesh");
             _camera3D = GetNode<Camera3D>("GlobeContainer/Camera3D");
             _camera3D.Current = true;
+            // Desloca o frustum para a direita para centrar o globo no espaço livre (à direita do painel ~330px)
+            _camera3D.HOffset = -1.0f;
 
             _tacticalView = new TacticalView();
             _tacticalView.Visible = false;
@@ -102,9 +111,21 @@ namespace Jogomania.Editor
             vbox.AddChild(btnNames);
             vbox.MoveChild(btnNames, 9);
 
+            // Botão: Carregar Partida do Jogo (save_atual.json do Slot 1)
+            var btnLoadSave = new Button();
+            btnLoadSave.Text = "📂 Carregar Partida Salva";
+            btnLoadSave.Pressed += OnBtnLoadGameSavePressed;
+            vbox.AddChild(btnLoadSave);
+            vbox.MoveChild(btnLoadSave, 10);
+
             _loadingPanel = GetNode<Control>("UILayer/LoadingPanel");
             _progressBar = GetNode<ProgressBar>("UILayer/LoadingPanel/VBoxContainer/ProgressBar");
             _labelStatus = GetNode<Label>("UILayer/LoadingPanel/VBoxContainer/LabelStatus");
+
+            // SaveFeedback: limita a largura para não expandir o painel
+            _saveFeedback.ClipText = true;
+            _saveFeedback.CustomMinimumSize = new Vector2(0, 0);
+            _saveFeedback.SizeFlagsHorizontal = Control.SizeFlags.Fill;
         }
 
         public override void _Process(double delta)
@@ -610,7 +631,9 @@ namespace Jogomania.Editor
                 System.IO.File.WriteAllText(path, jsonString);
             });
 
-            _saveFeedback.Text = $"✅ Mapa Salvo! ({path})";
+            // Trunca o caminho para não expandir o painel lateral
+            string shortPath = path.Length > 35 ? "..." + path.Substring(path.Length - 32) : path;
+            _saveFeedback.Text = $"✅ Salvo! ({shortPath})";
         }
 
         private void OnBtnExportMapPressed()
@@ -706,11 +729,76 @@ namespace Jogomania.Editor
                 material.ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded;
                 _planetMesh.SetSurfaceOverrideMaterial(0, material);
 
+                // Setar MapData para o TacticalView funcionar neste editor
+                _tacticalView.MapData = _currentMapData;
+
                 _generationProgress = 100f;
-                _saveFeedback.Text = $"✅ Mapa Carregado! ({_currentMapData.Villages?.Count ?? 0} aldeias)";
+                _saveFeedback.Text = $"✅ {_currentMapData.Villages?.Count ?? 0} aldeias carregadas";
                 _saveFeedback.Visible = true;
                 _loadingPanel.Visible = false;
             }
+        }
+
+        /// <summary>Carrega o save_atual.json da partida do Slot 1 para edição.</summary>
+        private async void OnBtnLoadGameSavePressed()
+        {
+            string savePath = GameManager.Instance.GetPartidasDir() + "/Slot_1/save_atual.json";
+            if (!System.IO.File.Exists(savePath))
+            {
+                _saveFeedback.Text = "❌ Nenhuma partida salva encontrada!";
+                _saveFeedback.Visible = true;
+                return;
+            }
+
+            ClearWorld();
+            _loadingPanel.Visible = true;
+            _generationProgress = 0f;
+            _labelStatus.Text = "Carregando partida salva...";
+
+            _currentMapData = await System.Threading.Tasks.Task.Run(() =>
+            {
+                string json = System.IO.File.ReadAllText(savePath);
+                var map = System.Text.Json.JsonSerializer.Deserialize<Data.MapData>(json);
+                if (map != null)
+                {
+                    map.Dimensions = new Vector2I(map.Width, map.Height);
+                    if (map.ChunksList != null)
+                        foreach (var c in map.ChunksList)
+                        {
+                            c.ChunkPosition = new Vector2I(c.PosX, c.PosY);
+                            map.Chunks[c.ChunkPosition] = c;
+                        }
+                }
+                return map;
+            });
+
+            if (_currentMapData == null)
+            {
+                _saveFeedback.Text = "❌ Erro ao ler a partida!";
+                _saveFeedback.Visible = true;
+                _loadingPanel.Visible = false;
+                return;
+            }
+
+            _tacticalView.MapData = _currentMapData;
+            _labelStatus.Text = "Renderizando Terreno...";
+            _generationProgress = 65f;
+            RenderCurrentMapData();
+
+            _labelStatus.Text = "Costurando Globo...";
+            _generationProgress = 80f;
+            _globeContainer.Visible = true;
+            _worldContainer.Visible = false;
+
+            Image globeImg = await Task.Run(() => GenerateGlobeImage());
+            var mat = new StandardMaterial3D();
+            mat.AlbedoTexture = ImageTexture.CreateFromImage(globeImg);
+            mat.ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded;
+            _planetMesh.SetSurfaceOverrideMaterial(0, mat);
+
+            _saveFeedback.Text = $"✅ Partida carregada ({_currentMapData.Villages?.Count ?? 0} aldeias)";
+            _saveFeedback.Visible = true;
+            _loadingPanel.Visible = false;
         }
 
         private async void OnBtnToggle3DPressed()
@@ -903,9 +991,35 @@ namespace Jogomania.Editor
                 }
                 else if (@event is InputEventScreenTouch touchEvent)
                 {
+                    // Rastrear estado de cada dedo individualmente
                     if (touchEvent.Index == 0)
                     {
-                        _isDraggingGlobe = touchEvent.Pressed;
+                        _finger0Down = touchEvent.Pressed;
+                        _finger0Pos = touchEvent.Position;
+                        if (touchEvent.Pressed)
+                        {
+                            _isDraggingGlobe = true;
+                        }
+                        else
+                        {
+                            _isDraggingGlobe = false;
+                            _pinchPrevDistance = 0f;
+                        }
+                    }
+                    else if (touchEvent.Index == 1)
+                    {
+                        _finger1Down = touchEvent.Pressed;
+                        _finger1Pos = touchEvent.Position;
+                        if (touchEvent.Pressed)
+                        {
+                            // Segundo dedo tocou — inicia pinch
+                            _pinchPrevDistance = _finger0Pos.DistanceTo(_finger1Pos);
+                            _isDraggingGlobe = false; // Cancela pan enquanto pinça
+                        }
+                        else
+                        {
+                            _pinchPrevDistance = 0f;
+                        }
                     }
                 }
                 else if (@event is InputEventMouseMotion mouseMotion)
@@ -914,7 +1028,15 @@ namespace Jogomania.Editor
                 }
                 else if (@event is InputEventScreenDrag dragEvent)
                 {
-                    HandlePan(dragEvent.Relative);
+                    // Atualiza posição do dedo que arrastou
+                    if (dragEvent.Index == 0) _finger0Pos = dragEvent.Position;
+                    else if (dragEvent.Index == 1) _finger1Pos = dragEvent.Position;
+
+                    // Pinch ativo quando dois dedos estão na tela
+                    if (_finger0Down && _finger1Down)
+                        HandlePinch();
+                    else
+                        HandlePan(dragEvent.Relative);
                 }
                 return;
             }
@@ -974,6 +1096,42 @@ namespace Jogomania.Editor
             }
         }
 
+        /// <summary>Processa o gesto de pinça (dois dedos) para dar zoom.</summary>
+        private void HandlePinch()
+        {
+            float currentDistance = _finger0Pos.DistanceTo(_finger1Pos);
+            if (_pinchPrevDistance <= 0f)
+            {
+                _pinchPrevDistance = currentDistance;
+                return;
+            }
+
+            float delta = currentDistance - _pinchPrevDistance;
+            _pinchPrevDistance = currentDistance;
+
+            if (Mathf.Abs(delta) < 2f) return; // Threshold para evitar jitter
+
+            if (!_isTacticalMode)
+            {
+                // Globo 3D
+                float newZ = _camera3D.Position.Z - delta * 0.005f;
+                newZ = Mathf.Clamp(newZ, 1.02f, 5.0f);
+                _camera3D.Position = new Vector3(0, 0, newZ);
+                if (newZ <= 1.08f)
+                    EnterTacticalMode();
+            }
+            else
+            {
+                // Visão Tática 2D
+                float zoomFactor = 1.0f + delta * 0.008f;
+                int newZoom = Mathf.Clamp((int)(_tacticalView.ZoomLevel * zoomFactor), 8, 128);
+                if (newZoom < 8)
+                    ExitTacticalMode();
+                else
+                    _tacticalView.ZoomLevel = newZoom;
+            }
+        }
+
         private void PaintAtMouse(Vector2 mousePos)
         {
             if (_currentMapData == null) return;
@@ -1005,30 +1163,31 @@ namespace Jogomania.Editor
 
         private void EnterTacticalMode()
         {
+            if (_currentMapData == null) return;
+
             _isTacticalMode = true;
             _camera3D.Current = false;
             _camera2D.Enabled = true;
             _camera2D.MakeCurrent();
             _camera2D.Zoom = new Vector2(1, 1);
-            
+
+            _tacticalView.MapData = _currentMapData; // Garante que o mapa está setado
+            _tacticalView.ZoomLevel = 32;
             _tacticalView.Visible = true;
             _globeContainer.Visible = false;
 
+            // Calcula o ponto do mapa que a câmera estava vendo no globo
             Vector3 localCenter = _planetMesh.ToLocal(new Vector3(0, 0, 1)).Normalized();
-            
             float u = 0.5f + Mathf.Atan2(localCenter.X, -localCenter.Z) / (Mathf.Pi * 2.0f);
-            float v = Mathf.Acos(localCenter.Y) / Mathf.Pi;
-            
-            if (_currentMapData != null)
-            {
-                int mapX = Mathf.Clamp((int)(u * _currentMapData.Width), 0, _currentMapData.Width - 1);
-                int mapY = Mathf.Clamp((int)(v * _currentMapData.Height), 0, _currentMapData.Height - 1);
-                
-                _tacticalView.CenterX = mapX;
-                _tacticalView.CenterY = mapY;
-                _camera2D.Position = Vector2.Zero;
-                _tacticalView.QueueRedraw();
-            }
+            float v = Mathf.Acos(Mathf.Clamp(localCenter.Y, -1f, 1f)) / Mathf.Pi;
+
+            int mapX = Mathf.Clamp((int)(u * _currentMapData.Width), 0, _currentMapData.Width - 1);
+            int mapY = Mathf.Clamp((int)(v * _currentMapData.Height), 0, _currentMapData.Height - 1);
+
+            _tacticalView.CenterX = mapX;
+            _tacticalView.CenterY = mapY;
+            _camera2D.Position = Vector2.Zero;
+            _tacticalView.QueueRedraw();
         }
 
         private void ExitTacticalMode()

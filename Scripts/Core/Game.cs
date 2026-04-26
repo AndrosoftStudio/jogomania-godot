@@ -30,6 +30,25 @@ namespace Jogomania.Core
 		private float _globeScaleX;
 		private float _globeScaleY;
 
+		// ── Pinch-to-Zoom (dois dedos) ──
+		private bool _finger0Down = false;
+		private bool _finger1Down = false;
+		private Vector2 _finger0Pos = Vector2.Zero;
+		private Vector2 _finger1Pos = Vector2.Zero;
+		private float _pinchPrevDistance = 0f;
+
+			// ── Câmera Orbital ──
+		private float _cameraYaw = 0f;
+		private float _cameraPitch = 0.3f;
+		private float _cameraDistance = 2.5f;
+		// ── Sol ──
+		private float _sunAngle = 0f;
+		private const float SUN_SPEED = 0.005f; // ~21 minutos para 1 dia completo
+		private MeshInstance3D _sunMesh;
+		private DirectionalLight3D _sunLight;
+		private ShaderMaterial _starShaderMat;
+		private float _starTime = 0f;
+
 		private TerritorySystem _territorySystem;
 		private VillageData _playerCapital;
 		private bool _isGameStarted = false;
@@ -83,32 +102,113 @@ namespace Jogomania.Core
 
 		private void SetupSpaceEnvironment()
 		{
-			// Configurar Fundo Espacial Escuro
 			var env = new Godot.Environment();
 			env.BackgroundMode = Godot.Environment.BGMode.Color;
-			env.BackgroundColor = new Color(0.01f, 0.01f, 0.03f, 1.0f); // Azul super escuro
+			env.BackgroundColor = new Color(0.0f, 0.0f, 0.0f, 1.0f);
+			// Luz ambiente baixa para ter contraste dia/noite
+			env.AmbientLightSource = Godot.Environment.AmbientSource.Color;
+			env.AmbientLightColor = new Color(0.05f, 0.06f, 0.12f);
+			env.AmbientLightEnergy = 0.3f;
+			// Bloom para o sol e atmosfera
+			env.GlowEnabled = true;
+			env.GlowIntensity = 1.0f;
+			env.GlowBloom = 0.5f;
+			env.GlowHdrThreshold = 0.7f;
+			env.GlowBlendMode = Godot.Environment.GlowBlendModeEnum.Additive;
 			_camera3D.Environment = env;
 
-			// Instanciar Atmosfera Brilhante
+			// Atmosfera
 			var atmosMesh = new MeshInstance3D();
-			var sphere = new SphereMesh();
-			sphere.Radius = 1.05f; // Levemente maior que o planeta (1.0)
-			sphere.Height = 2.10f;
+			var sphere = new SphereMesh(); sphere.Radius = 1.05f; sphere.Height = 2.10f;
 			atmosMesh.Mesh = sphere;
-
 			var atmosMat = new ShaderMaterial();
 			var shader = GD.Load<Shader>("res://Shaders/Atmosphere.gdshader");
 			if (shader != null)
 			{
 				atmosMat.Shader = shader;
-				// Configurações padrão do shader
 				atmosMat.SetShaderParameter("atmosphere_color", new Color(0.3f, 0.6f, 1.0f, 1.0f));
 				atmosMat.SetShaderParameter("falloff", 3.0f);
 				atmosMat.SetShaderParameter("intensity", 1.2f);
 			}
 			atmosMesh.MaterialOverride = atmosMat;
-
 			_globeContainer.AddChild(atmosMesh);
+
+			// Estrelas — 4096x2048 com 1px por estrela para pontos minúsculos
+			var starImg = Image.CreateEmpty(4096, 2048, false, Image.Format.Rgba8);
+			starImg.Fill(new Color(0,0,0,0));
+			var rng = new RandomNumberGenerator(); rng.Seed = 12345;
+			for (int i = 0; i < 2500; i++)
+			{
+				float b = rng.Randf() * 0.7f + 0.3f;
+				starImg.SetPixel(rng.RandiRange(0,4095), rng.RandiRange(0,2047), new Color(b,b,b,1));
+			}
+			var starTex = ImageTexture.CreateFromImage(starImg);
+			var starMesh = new MeshInstance3D();
+			var starSphere = new SphereMesh(); starSphere.Radius = 50f; starSphere.Height = 100f;
+			starMesh.Mesh = starSphere;
+			_starShaderMat = new ShaderMaterial();
+			var starShader = GD.Load<Shader>("res://Shaders/Starfield.gdshader");
+			if (starShader != null) { _starShaderMat.Shader = starShader; _starShaderMat.SetShaderParameter("star_texture", starTex); }
+			starMesh.MaterialOverride = _starShaderMat;
+			_globeContainer.AddChild(starMesh);
+
+			// Sol decorativo
+			_sunMesh = new MeshInstance3D();
+			var sunSphere = new SphereMesh(); sunSphere.Radius = 0.4f; sunSphere.Height = 0.8f;
+			_sunMesh.Mesh = sunSphere;
+			var sunMat = new StandardMaterial3D();
+			sunMat.AlbedoColor = new Color(1f, 0.95f, 0.3f);
+			sunMat.EmissionEnabled = true;
+			sunMat.Emission = new Color(1f, 0.9f, 0.2f);
+			sunMat.EmissionEnergyMultiplier = 3f;
+			sunMat.ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded;
+			_sunMesh.MaterialOverride = sunMat;
+			_globeContainer.AddChild(_sunMesh);
+
+			// Luz direcional (dia/noite)
+			_sunLight = new DirectionalLight3D();
+			_sunLight.LightColor = new Color(1f, 0.95f, 0.85f);
+			_sunLight.LightEnergy = 1.8f;
+			_globeContainer.AddChild(_sunLight);
+
+			UpdateSunPosition();
+			UpdateCameraOrbit();
+		}
+
+		public override void _Process(double delta)
+		{
+			if (!_isTacticalMode && _sunMesh != null)
+			{
+				_sunAngle += SUN_SPEED * (float)delta;
+				if (_sunAngle > Mathf.Pi * 2f) _sunAngle -= Mathf.Pi * 2f;
+				UpdateSunPosition();
+				// Twinkle das estrelas
+				_starTime += (float)delta;
+				if (_starShaderMat != null) _starShaderMat.SetShaderParameter("time_offset", _starTime);
+			}
+		}
+
+		private void UpdateCameraOrbit()
+		{
+			float x = _cameraDistance * Mathf.Cos(_cameraPitch) * Mathf.Sin(_cameraYaw);
+			float y = _cameraDistance * Mathf.Sin(_cameraPitch);
+			float z = _cameraDistance * Mathf.Cos(_cameraPitch) * Mathf.Cos(_cameraYaw);
+			_camera3D.Position = new Vector3(x, y, z);
+			if (_camera3D.Position.LengthSquared() > 0.001f)
+				_camera3D.LookAt(Vector3.Zero, Vector3.Up);
+		}
+
+		private void UpdateSunPosition()
+		{
+			float sx = 8f * Mathf.Cos(_sunAngle);
+			float sz = 8f * Mathf.Sin(_sunAngle);
+			var sunPos = new Vector3(sx, 1.5f, sz);
+			if (_sunMesh != null) _sunMesh.Position = sunPos;
+			if (_sunLight != null)
+			{
+				_sunLight.Position = sunPos;
+				if (sunPos.LengthSquared() > 0.001f) _sunLight.LookAt(Vector3.Zero, Vector3.Up);
+			}
 		}
 
 		private void EnterTacticalMode()
@@ -122,12 +222,10 @@ namespace Jogomania.Core
 			_tacticalView.Visible = true;
 			_globeContainer.Visible = false;
 
-			// Calcula qual ponto do mapa está no centro da câmera 3D
-			Vector3 localCenter = _planetMesh.ToLocal(new Vector3(0, 0, 1)).Normalized();
-			
-			float u = 0.5f + Mathf.Atan2(localCenter.X, -localCenter.Z) / (Mathf.Pi * 2.0f);
-			float v = Mathf.Acos(localCenter.Y) / Mathf.Pi;
-			
+			// Planeta fixo, câmera orbita - o ponto que a câmera vê é sua direção normalizada
+			Vector3 camDir = _camera3D.Position.Normalized();
+			float u = 0.5f + Mathf.Atan2(camDir.X, -camDir.Z) / (Mathf.Pi * 2.0f);
+			float v = Mathf.Acos(Mathf.Clamp(camDir.Y, -1f, 1f)) / Mathf.Pi;
 			int mapCX = Mathf.Clamp((int)(u * _loadedMapData.Width),  0, _loadedMapData.Width  - 1);
 			int mapCY = Mathf.Clamp((int)(v * _loadedMapData.Height), 0, _loadedMapData.Height - 1);
 
@@ -135,7 +233,7 @@ namespace Jogomania.Core
 			// A câmera começa em world (0, 0) => exibimos exatamente o tile central.
 			_tacticalView.CenterX = mapCX;
 			_tacticalView.CenterY = mapCY;
-			_tacticalView.ZoomLevel = 32;
+			_tacticalView.ZoomLevel = 10; // Zoom inicial mais afastado
 			_tacticalView.ShowVillageNames = _showVillageNames;
 			_camera2D.Position = Vector2.Zero;
 			_tacticalView.QueueRedraw();
@@ -143,12 +241,28 @@ namespace Jogomania.Core
 
 		private void ExitTacticalMode()
 		{
+			// Calcular ponto do mapa que está no centro da tela tática
+			if (_loadedMapData != null)
+			{
+				float mapCenterX = _tacticalView.CenterX + _camera2D.Position.X / Mathf.Max(1, _tacticalView.ZoomLevel);
+				float mapCenterY = _tacticalView.CenterY + _camera2D.Position.Y / Mathf.Max(1, _tacticalView.ZoomLevel);
+				float normU = mapCenterX / _loadedMapData.Width;
+				float normV = mapCenterY / _loadedMapData.Height;
+				// Converter UV de mapa para yaw/pitch na esfera
+				float phi = (normU - 0.5f) * Mathf.Pi * 2.0f;
+				float theta = normV * Mathf.Pi;
+				// phi = longitude (yaw), theta = colatitude (pitch a partir do polo)
+				_cameraYaw = -phi; // negativo porque Atan2(X,-Z) inverte o sinal
+				_cameraPitch = Mathf.Pi * 0.5f - theta; // pitch = 90° - colatitude
+				_cameraPitch = Mathf.Clamp(_cameraPitch, -1.4f, 1.4f);
+			}
 			_isTacticalMode = false;
 			_camera3D.Current = true;
 			_camera2D.Enabled = false;
 			_tacticalView.Visible = false;
 			_globeContainer.Visible = true;
-			_camera3D.Position = new Vector3(0, 0, 1.4f); // Zoom de saída: razoável, não no buraco
+			_cameraDistance = 2.5f;
+			UpdateCameraOrbit();
 		}
 
 		private void ToggleVillageNames(bool on)
@@ -207,7 +321,8 @@ namespace Jogomania.Core
 			_globeTexture = ImageTexture.CreateFromImage(_globeImage);
 			var material = new StandardMaterial3D();
 			material.AlbedoTexture = _globeTexture;
-			material.ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded;
+			material.Roughness = 1.0f;
+			material.Metallic = 0.0f;
 			material.TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest; // Borda nítida estilo Unciv!
 			_planetMesh.SetSurfaceOverrideMaterial(0, material);
 			
@@ -366,137 +481,149 @@ namespace Jogomania.Core
 		}
 
 		public override void _UnhandledInput(InputEvent @event)
+	{
+		// Tecla N — mostrar/ocultar nomes (Tab é reservado para navegação de UI)
+		if (@event is InputEventKey key && key.Pressed && !key.Echo)
 		{
-			// Tecla Tab — mostrar/ocultar nomes
-			if (@event is InputEventKey key && key.Pressed && !key.Echo)
+			if (key.Keycode == Key.N)
 			{
-				if (key.Keycode == Key.Tab)
-				{
-					_showVillageNames = !_showVillageNames;
-					_tacticalView.ShowVillageNames = _showVillageNames;
-					if (_btnToggleNames != null) _btnToggleNames.ButtonPressed = _showVillageNames;
-					return;
-				}
-				if (key.Keycode == Key.Escape && _isTacticalMode)
-				{
-					ExitTacticalMode();
-					return;
-				}
+				_showVillageNames = !_showVillageNames;
+				_tacticalView.ShowVillageNames = _showVillageNames;
+				if (_btnToggleNames != null) _btnToggleNames.ButtonPressed = _showVillageNames;
+				return;
 			}
-
-			if (@event is InputEventMouseButton mouseBtn)
+			if (key.Keycode == Key.Escape && _isTacticalMode)
 			{
-				if (mouseBtn.ButtonIndex == MouseButton.Left)
-				{
-					if (mouseBtn.Pressed)
-					{
-						_isDraggingGlobe = true;
-						_wasDragging = false;
-					}
-					else
-					{
-						_isDraggingGlobe = false;
-						if (!_wasDragging && !_isGameStarted && !_isTacticalMode)
-						{
-							SelectStartingVillage(mouseBtn.Position);
-						}
-						_wasDragging = false;
-					}
-				}
-				
-				if (mouseBtn.ButtonIndex == MouseButton.WheelUp && mouseBtn.Pressed)
-				{
-					if (!_isTacticalMode)
-					{
-						_camera3D.Position = new Vector3(0, 0, Mathf.Max(1.02f, _camera3D.Position.Z - 0.15f));
-						if (_camera3D.Position.Z <= 1.08f)
-							EnterTacticalMode();
-					}
-					else
-					{
-						// Zoom IN: aumenta ZoomLevel dos tiles
-						_tacticalView.ZoomLevel = Mathf.Min(128, (int)(_tacticalView.ZoomLevel * 1.25f));
-					}
-				}
-				else if (mouseBtn.ButtonIndex == MouseButton.WheelDown && mouseBtn.Pressed)
-				{
-					if (!_isTacticalMode)
-					{
-						_camera3D.Position = new Vector3(0, 0, Mathf.Min(5.0f, _camera3D.Position.Z + 0.15f));
-					}
-					else
-					{
-						// Zoom OUT: diminui ZoomLevel dos tiles; ao chegar em 8 volta ao globo
-						int newZoom = (int)(_tacticalView.ZoomLevel * 0.8f);
-						if (newZoom < 8)
-							ExitTacticalMode();
-						else
-							_tacticalView.ZoomLevel = newZoom;
-					}
-				}
-			}
-				else if (@event is InputEventScreenTouch touchEvent)
-				{
-					if (touchEvent.Index == 0)
-					{
-						if (touchEvent.Pressed)
-						{
-							_isDraggingGlobe = true;
-							_wasDragging = false;
-						}
-						else
-						{
-							_isDraggingGlobe = false;
-							if (!_wasDragging && !_isGameStarted && !_isTacticalMode)
-							{
-								SelectStartingVillage(touchEvent.Position);
-							}
-							_wasDragging = false;
-						}
-					}
-				}
-				else if (@event is InputEventMouseMotion mouseMotion)
-				{
-					HandlePan(mouseMotion.Relative);
-				}
-				else if (@event is InputEventScreenDrag dragEvent)
-				{
-					HandlePan(dragEvent.Relative);
-				}
-			}
-
-		private void HandlePan(Vector2 relative)
-		{
-			if (relative.LengthSquared() > 4.0f) _wasDragging = true; // Mais de ~2px = foi arrastado
-			
-			if (_isDraggingGlobe && !_isTacticalMode)
-			{
-				bool isCtrlPressed = Input.IsKeyPressed(Key.Ctrl);
-				bool isShiftPressed = Input.IsKeyPressed(Key.Shift);
-				
-				if (isCtrlPressed)
-				{
-					Vector3 forward = _camera3D.Transform.Basis.Z;
-					_planetMesh.Rotate(forward.Normalized(), relative.X * 0.01f);
-				}
-				else if (isShiftPressed)
-				{
-					Vector3 right = _camera3D.Transform.Basis.X;
-					_planetMesh.Rotate(right.Normalized(), relative.Y * 0.01f);
-				}
-				else
-				{
-					_planetMesh.RotateY(relative.X * 0.01f);
-					_planetMesh.RotateX(relative.Y * 0.01f);
-				}
-			}
-			else if (_isDraggingGlobe && _isTacticalMode)
-			{
-				_camera2D.Position -= relative * (_camera2D.Zoom.X > 0 ? 1.0f / _camera2D.Zoom.X : 1.0f);
+				ExitTacticalMode();
+				return;
 			}
 		}
 
-		private void SelectStartingVillage(Vector2 screenPos)
+		if (@event is InputEventMouseButton mouseBtn)
+		{
+			if (mouseBtn.ButtonIndex == MouseButton.Left)
+			{
+				if (mouseBtn.Pressed) { _isDraggingGlobe = true; _wasDragging = false; }
+				else
+				{
+					_isDraggingGlobe = false;
+					if (!_wasDragging && !_isGameStarted && !_isTacticalMode)
+						SelectStartingVillage(mouseBtn.Position);
+					_wasDragging = false;
+				}
+			}
+			else if (mouseBtn.ButtonIndex == MouseButton.WheelUp && mouseBtn.Pressed)
+			{
+				if (!_isTacticalMode)
+				{
+					_cameraDistance = Mathf.Max(1.08f, _cameraDistance - 0.15f);
+					UpdateCameraOrbit();
+					if (_cameraDistance <= 1.08f) EnterTacticalMode();
+				}
+				else
+				{
+					int oldZu = _tacticalView.ZoomLevel;
+					int newZu = Mathf.Min(128, (int)(oldZu * 1.25f));
+					if (newZu != oldZu) { _camera2D.Position *= (float)newZu / oldZu; _tacticalView.ZoomLevel = newZu; }
+				}
+			}
+			else if (mouseBtn.ButtonIndex == MouseButton.WheelDown && mouseBtn.Pressed)
+			{
+				if (!_isTacticalMode)
+				{
+					_cameraDistance = Mathf.Min(5.0f, _cameraDistance + 0.15f);
+					UpdateCameraOrbit();
+				}
+				else
+				{
+					int oldZd = _tacticalView.ZoomLevel;
+					int nz = (int)(oldZd * 0.8f);
+					if (nz < 8) ExitTacticalMode();
+					else { _camera2D.Position *= (float)nz / oldZd; _tacticalView.ZoomLevel = nz; }
+				}
+			}
+		}
+		else if (@event is InputEventMouseMotion mouseMotion)
+		{
+			if (_isDraggingGlobe) HandlePan(mouseMotion.Relative);
+		}
+		else if (@event is InputEventScreenTouch touchEvent)
+		{
+			if (touchEvent.Index == 0)
+			{
+				_finger0Down = touchEvent.Pressed;
+				_finger0Pos = touchEvent.Position;
+				if (touchEvent.Pressed) { _isDraggingGlobe = true; _wasDragging = false; }
+				else
+				{
+					if (!_finger1Down && !_wasDragging && !_isGameStarted && !_isTacticalMode)
+						SelectStartingVillage(touchEvent.Position);
+					_isDraggingGlobe = false;
+					_wasDragging = false;
+					_pinchPrevDistance = 0f;
+				}
+			}
+			else if (touchEvent.Index == 1)
+			{
+				_finger1Down = touchEvent.Pressed;
+				_finger1Pos = touchEvent.Position;
+				if (touchEvent.Pressed)
+				{
+					_pinchPrevDistance = _finger0Pos.DistanceTo(_finger1Pos);
+					_isDraggingGlobe = false;
+					_wasDragging = true;
+				}
+				else _pinchPrevDistance = 0f;
+			}
+		}
+		else if (@event is InputEventScreenDrag dragEvent)
+		{
+			if (dragEvent.Index == 0) _finger0Pos = dragEvent.Position;
+			else if (dragEvent.Index == 1) _finger1Pos = dragEvent.Position;
+			if (_finger0Down && _finger1Down) HandlePinch();
+			else HandlePan(dragEvent.Relative);
+		}
+	}
+
+	private void HandlePan(Vector2 relative)
+	{
+		if (relative.LengthSquared() > 4.0f) _wasDragging = true;
+		if (!_isTacticalMode)
+		{
+			// Câmera orbita o planeta — planeta fica fixo (dia/noite independente)
+			_cameraYaw   -= relative.X * 0.005f;
+			_cameraPitch  = Mathf.Clamp(_cameraPitch + relative.Y * 0.005f, -1.4f, 1.4f);
+			UpdateCameraOrbit();
+		}
+		else
+		{
+			_camera2D.Position -= relative * (_camera2D.Zoom.X > 0 ? 1.0f / _camera2D.Zoom.X : 1.0f);
+		}
+	}
+
+	/// <summary>Processa o gesto de pinça (dois dedos) para dar zoom.</summary>
+	private void HandlePinch()
+	{
+		float currentDist = _finger0Pos.DistanceTo(_finger1Pos);
+		if (_pinchPrevDistance <= 0f) { _pinchPrevDistance = currentDist; return; }
+		float delta = currentDist - _pinchPrevDistance;
+		_pinchPrevDistance = currentDist;
+		if (Mathf.Abs(delta) < 2f) return;
+		if (!_isTacticalMode)
+		{
+			_cameraDistance = Mathf.Clamp(_cameraDistance - delta * 0.005f, 1.08f, 5.0f);
+			UpdateCameraOrbit();
+			if (_cameraDistance <= 1.08f) EnterTacticalMode();
+		}
+		else
+		{
+			float zf = 1f + delta * 0.008f;
+			int nz = (int)(_tacticalView.ZoomLevel * zf);
+			if (nz < 8) ExitTacticalMode();
+			else _tacticalView.ZoomLevel = Mathf.Clamp(nz, 8, 128);
+		}
+	}
+	private void SelectStartingVillage(Vector2 screenPos)
 		{
 			var spaceState = _globeContainer.GetWorld3D().DirectSpaceState;
 			var from = _camera3D.ProjectRayOrigin(screenPos);
