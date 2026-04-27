@@ -33,6 +33,12 @@ namespace Jogomania.UI
 
         public override void _Ready()
         {
+            // Limpa a tela antiga feita pelo Editor Visual para não ficar no fundo
+            foreach (Node child in GetChildren())
+            {
+                child.QueueFree();
+            }
+
             BuildUI();
             LoadCurrentSettings();
             AdaptToPlatform();
@@ -84,7 +90,18 @@ namespace Jogomania.UI
             BuildExtrasTab();
 
             _btnClose = new Button { Text = "Voltar / Salvar", CustomMinimumSize = new Vector2(200, 50), SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter };
-            _btnClose.Pressed += () => QueueFree();
+            _btnClose.Pressed += () => 
+            {
+                SaveSettingsToDisk();
+                if (GetParent() == GetTree().Root)
+                {
+                    GameManager.Instance?.GoToMainMenu();
+                }
+                else
+                {
+                    QueueFree();
+                }
+            };
             vbox.AddChild(_btnClose);
         }
 
@@ -221,6 +238,30 @@ namespace Jogomania.UI
             _chkVSync.ButtonPressed = DisplayServer.WindowGetVsyncMode() != DisplayServer.VSyncMode.Disabled;
             _sldRenderScale.Value = GetViewport().Scaling3DScale;
             _optAntiAliasing.Selected = (int)GetViewport().Msaa3D;
+
+            if (LocalizationManager.Instance != null)
+            {
+                string lang = LocalizationManager.Instance.CurrentLanguage;
+                for (int i = 0; i < _optLanguage.ItemCount; i++)
+                {
+                    if ((string)_optLanguage.GetItemMetadata(i) == lang)
+                    {
+                        _optLanguage.Selected = i;
+                        break;
+                    }
+                }
+            }
+        }
+
+        private void SaveSettingsToDisk()
+        {
+            var config = new ConfigFile();
+            config.SetValue("Video", "Fullscreen", _chkFullscreen.ButtonPressed);
+            config.SetValue("Video", "VSync", _chkVSync.ButtonPressed);
+            config.SetValue("Video", "RenderScale", _sldRenderScale.Value);
+            config.SetValue("Video", "AntiAliasing", _optAntiAliasing.Selected);
+            config.SetValue("General", "Language", LocalizationManager.Instance != null ? LocalizationManager.Instance.CurrentLanguage : "pt-BR");
+            config.Save("user://settings.cfg");
         }
 
         private void AdaptToPlatform()

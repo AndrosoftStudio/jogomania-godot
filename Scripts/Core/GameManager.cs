@@ -35,6 +35,33 @@ namespace Jogomania.Core
                 GetTree().Root.ContentScaleFactor = scaleFactor;
                 GD.Print($"[UI Scale] DPI={screenDpi}, ScaleFactor={scaleFactor:F2}x");
             }
+
+            LoadUserSettings();
+        }
+
+        private void LoadUserSettings()
+        {
+            var config = new ConfigFile();
+            if (config.Load("user://settings.cfg") == Godot.Error.Ok)
+            {
+                bool fs = (bool)config.GetValue("Video", "Fullscreen", false);
+                DisplayServer.WindowSetMode(fs ? DisplayServer.WindowMode.Fullscreen : DisplayServer.WindowMode.Windowed);
+
+                bool vsync = (bool)config.GetValue("Video", "VSync", true);
+                DisplayServer.WindowSetVsyncMode(vsync ? DisplayServer.VSyncMode.Enabled : DisplayServer.VSyncMode.Disabled);
+
+                float scale = (float)config.GetValue("Video", "RenderScale", 1.0f);
+                GetViewport().Scaling3DScale = scale;
+
+                int aa = (int)config.GetValue("Video", "AntiAliasing", 0);
+                GetViewport().Msaa3D = (Viewport.Msaa)aa;
+
+                if (LocalizationManager.Instance != null)
+                {
+                    string lang = (string)config.GetValue("General", "Language", "pt-BR");
+                    LocalizationManager.Instance.LoadLanguage(lang);
+                }
+            }
         }
 
         public static string GodotToSysPath(string godotPath)
@@ -60,7 +87,16 @@ namespace Jogomania.Core
         {
             string dir = GetMapsDir();
             if (!Directory.Exists(dir)) return Array.Empty<string>();
-            string[] files = Directory.GetFiles(dir, "*.json");
+            
+            var validMaps = new List<string>();
+            foreach (string subDir in Directory.GetDirectories(dir))
+            {
+                string dirName = Path.GetFileName(subDir);
+                string expectedJson = Path.Combine(subDir, dirName + ".json");
+                if (File.Exists(expectedJson)) validMaps.Add(expectedJson);
+            }
+            
+            string[] files = validMaps.ToArray();
             Array.Sort(files, StringComparer.OrdinalIgnoreCase);
             return files;
         }
@@ -106,6 +142,7 @@ namespace Jogomania.Core
             map.Dimensions = new Vector2I(map.Width, map.Height);
             map.Chunks ??= new Dictionary<Vector2I, ChunkData>();
 
+            bool dbLoaded = false;
             // Se possuir o caminho, ele carrega as matrizes gigantes de terreno do Banco de Dados
             if (!string.IsNullOrWhiteSpace(sysPath))
             {
@@ -113,6 +150,21 @@ namespace Jogomania.Core
                 if (File.Exists(dbPath))
                 {
                     map.Chunks = MapDatabase.LoadAllChunks(dbPath);
+                    dbLoaded = true;
+                }
+            }
+
+            // Retrocompatibilidade para mapas antigos salvos inteiramente no JSON
+            if (!dbLoaded && map.ChunksList != null && map.ChunksList.Count > 0)
+            {
+                foreach (ChunkData c in map.ChunksList)
+                {
+                    if (c == null) continue;
+                    c.ChunkPosition = new Vector2I(c.PosX, c.PosY);
+                    c.TerrainMap ??= new byte[ChunkData.CHUNK_SIZE * ChunkData.CHUNK_SIZE];
+                    c.TerritoryMap ??= new byte[ChunkData.CHUNK_SIZE * ChunkData.CHUNK_SIZE];
+                    c.EntityIds ??= new List<int>();
+                    map.Chunks[c.ChunkPosition] = c;
                 }
             }
 
