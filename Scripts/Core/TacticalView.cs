@@ -13,11 +13,31 @@ namespace Jogomania.Core
         public bool UseDayNight = true;
         public Vector3 SunDirection = Vector3.Right;
         public float TimeOffset = 0f;
+        public bool FlipX = true;
+        public bool FlipY = true;
 
-        private const float MapAspectX = 1.65f;
+        private const float MapAspectX = 1.5f;
+        public const float MinZoomLevel = 2.35f;
+        public const float MaxZoomLevel = 64f;
 
-        public float TileWidth => Mathf.Max(1f, ZoomLevel) * MapAspectX;
-        public float TileHeight => Mathf.Max(1f, ZoomLevel);
+        public float TileWidth => ClampZoom(ZoomLevel) * MapAspectX;
+        public float TileHeight => ClampZoom(ZoomLevel);
+
+        public static float ClampZoom(float zoom)
+        {
+            return Mathf.Clamp(zoom, MinZoomLevel, MaxZoomLevel);
+        }
+
+        public Vector2 ClampCameraPosition(Vector2 position)
+        {
+            if (MapData == null || MapData.Height <= 0) return position;
+
+            float tileH = TileHeight;
+            float rawY = CenterY + (FlipY ? -position.Y : position.Y) / tileH;
+            float clampedY = Mathf.Clamp(rawY, 0f, MapData.Height - 1f);
+            position.Y = (FlipY ? -(clampedY - CenterY) : (clampedY - CenterY)) * tileH;
+            return position;
+        }
 
         public override void _Process(double delta)
         {
@@ -28,9 +48,15 @@ namespace Jogomania.Core
         public Vector2 GetMapCenterFromCamera(Camera2D camera)
         {
             return new Vector2(
-                CenterX + camera.Position.X / TileWidth,
-                CenterY + camera.Position.Y / TileHeight
+                CenterX + (FlipX ? camera.Position.X : -camera.Position.X) / TileWidth,
+                CenterY + (FlipY ? -camera.Position.Y : camera.Position.Y) / TileHeight
             );
+        }
+
+        public Vector3 GetSphereDirectionFromCamera(Camera2D camera)
+        {
+            Vector2 center = GetMapCenterFromCamera(camera);
+            return RawMapToSphereDirection(center.X, center.Y);
         }
 
         public override void _Draw()
@@ -52,28 +78,36 @@ namespace Jogomania.Core
             int startTileY = Mathf.FloorToInt((camPos.Y - halfH) / tileH) - 1;
             int endTileX = Mathf.CeilToInt((camPos.X + halfW) / tileW) + 1;
             int endTileY = Mathf.CeilToInt((camPos.Y + halfH) / tileH) + 1;
+            int tileStep = GetDrawTileStep();
+            startTileX = Mathf.FloorToInt((float)startTileX / tileStep) * tileStep;
+            startTileY = Mathf.FloorToInt((float)startTileY / tileStep) * tileStep;
 
-            for (int tileY = startTileY; tileY <= endTileY; tileY++)
+            for (int tileY = startTileY; tileY <= endTileY; tileY += tileStep)
             {
-                for (int tileX = startTileX; tileX <= endTileX; tileX++)
+                for (int tileX = startTileX; tileX <= endTileX; tileX += tileStep)
                 {
-                    NormalizeSphereTile(CenterX + tileX, CenterY + tileY, out int mapX, out int mapY);
+                    int rawMapX = CenterX + (FlipX ? tileX : -tileX);
+                    int rawMapY = CenterY + (FlipY ? -tileY : tileY);
+                    NormalizePaperTile(rawMapX, rawMapY, out int mapX, out int mapY);
                     Color tileColor = GetColorAt(mapX, mapY, out bool isBorderLeft, out bool isBorderTop, out _);
-                    tileColor = ApplyDayNight(tileColor, mapX, mapY);
+                    tileColor = ApplyDayNight(tileColor, rawMapX + tileStep * 0.5f, rawMapY + tileStep * 0.5f);
 
                     float wx = tileX * tileW;
                     float wy = tileY * tileH;
-                    DrawRect(new Rect2(wx, wy, tileW + 0.5f, tileH + 0.5f), tileColor);
+                    float drawW = tileW * tileStep + 0.5f;
+                    float drawH = tileH * tileStep + 0.5f;
+                    DrawRect(new Rect2(wx, wy, drawW, drawH), tileColor);
 
-                    DrawOceanMotion(mapX, mapY, wx, wy, tileW, tileH);
+                    if (ZoomLevel >= 2.0f)
+                        DrawOceanMotion(mapX, mapY, wx, wy, drawW, drawH);
 
-                    if (ZoomLevel >= 14f)
+                    if (tileStep == 1 && ZoomLevel >= 14f)
                         DrawTerrainDetail(mapX, mapY, wx, wy, tileW, tileH);
 
                     float borderW = Mathf.Max(1.0f, ZoomLevel * 0.05f);
-                    if (isBorderLeft)
+                    if (tileStep == 1 && isBorderLeft)
                         DrawLine(new Vector2(wx, wy), new Vector2(wx, wy + tileH), new Color(0.05f, 0.05f, 0.05f, 0.9f), borderW);
-                    if (isBorderTop)
+                    if (tileStep == 1 && isBorderTop)
                         DrawLine(new Vector2(wx, wy), new Vector2(wx + tileW, wy), new Color(0.05f, 0.05f, 0.05f, 0.9f), borderW);
                 }
             }
@@ -93,6 +127,15 @@ namespace Jogomania.Core
             if (ZoomLevel < 10f) return;
             float y = wy + tileH * (0.35f + 0.28f * pulse);
             DrawLine(new Vector2(wx + tileW * 0.18f, y), new Vector2(wx + tileW * 0.82f, y + tileH * 0.08f), new Color(0.55f, 0.82f, 1.0f, 0.18f), Mathf.Max(1f, ZoomLevel * 0.035f));
+        }
+
+        private int GetDrawTileStep()
+        {
+            if (ZoomLevel < 0.8f) return 8;
+            if (ZoomLevel < 1.2f) return 6;
+            if (ZoomLevel < 2.0f) return 4;
+            if (ZoomLevel < 3.0f) return 2;
+            return 1;
         }
 
         private void DrawTerrainDetail(int mapX, int mapY, float wx, float wy, float tileW, float tileH)
@@ -138,13 +181,10 @@ namespace Jogomania.Core
                 var points = new System.Collections.Generic.List<Vector2>();
                 foreach (var point in river.Points)
                 {
-                    int dx = point.X - CenterX;
-                    if (dx > MapData.Width / 2) dx -= MapData.Width;
-                    if (dx < -MapData.Width / 2) dx += MapData.Width;
-                    int dy = point.Y - CenterY;
-                    if (dy > MapData.Height / 2) dy -= MapData.Height;
-                    if (dy < -MapData.Height / 2) dy += MapData.Height;
-                    Vector2 p = new Vector2(dx * tileW + tileW * 0.5f, dy * tileH + tileH * 0.5f);
+                    GetNearestDisplayDelta(point.X, point.Y, out float dx, out float dy);
+                    float screenDy = FlipY ? -dy : dy;
+                    float screenDx = FlipX ? dx : -dx;
+                    Vector2 p = new Vector2(screenDx * tileW + tileW * 0.5f, screenDy * tileH + tileH * 0.5f);
                     if (p.X < camPos.X - halfW - tileW * 4 || p.X > camPos.X + halfW + tileW * 4) continue;
                     if (p.Y < camPos.Y - halfH - tileH * 4 || p.Y > camPos.Y + halfH + tileH * 4) continue;
                     points.Add(p);
@@ -161,15 +201,10 @@ namespace Jogomania.Core
 
             foreach (var v in MapData.Villages)
             {
-                int dx = v.X - CenterX;
-                if (dx > MapData.Width / 2) dx -= MapData.Width;
-                if (dx < -MapData.Width / 2) dx += MapData.Width;
-                int dy = v.Y - CenterY;
-                if (dy > MapData.Height / 2) dy -= MapData.Height;
-                if (dy < -MapData.Height / 2) dy += MapData.Height;
+                GetNearestDisplayDelta(v.X, v.Y, out float dx, out float dy);
 
-                float wx = dx * tileW;
-                float wy = dy * tileH;
+                float wx = (FlipX ? dx : -dx) * tileW;
+                float wy = (FlipY ? -dy : dy) * tileH;
                 if (wx < camPos.X - halfW - tileW * 3 || wx > camPos.X + halfW + tileW * 3) continue;
                 if (wy < camPos.Y - halfH - tileH * 3 || wy > camPos.Y + halfH + tileH * 3) continue;
 
@@ -185,12 +220,15 @@ namespace Jogomania.Core
             }
         }
 
-        private Color ApplyDayNight(Color color, int mapX, int mapY)
+        private Color ApplyDayNight(Color color, float rawMapX, float rawMapY)
         {
             if (!UseDayNight) return color;
-            Vector3 normal = PlanetMeshBuilder.MapToSphereDirection(mapX + 0.5f, mapY + 0.5f, MapData.Width, MapData.Height);
-            float day = Mathf.SmoothStep(-0.10f, 0.22f, normal.Dot(SunDirection.Normalized()));
-            float light = Mathf.Lerp(0.08f, 1.0f, day);
+            Vector3 normal = RawMapToSphereDirection(rawMapX, rawMapY);
+            float sunDot = normal.Dot(SunDirection.Normalized());
+            float day = Mathf.SmoothStep(0.02f, 0.38f, sunDot);
+            float nightGradient = Mathf.Pow(Mathf.Clamp((sunDot + 1.0f) / 1.12f, 0f, 1f), 1.22f);
+            float nightLight = Mathf.Lerp(0.020f, 0.50f, nightGradient);
+            float light = Mathf.Lerp(nightLight, 1.0f, day);
             return new Color(color.R * light, color.G * light, color.B * light, color.A);
         }
 
@@ -199,21 +237,10 @@ namespace Jogomania.Core
             return PlanetMeshBuilder.GetTerrainAt(MapData, mapX, mapY);
         }
 
-        private void NormalizeSphereTile(int rawX, int rawY, out int mapX, out int mapY)
+        private void NormalizePaperTile(int rawX, int rawY, out int mapX, out int mapY)
         {
-            int period = MapData.Height * 2;
-            int y = rawY % period;
-            if (y < 0) y += period;
-
-            int xOffset = 0;
-            if (y >= MapData.Height)
-            {
-                y = period - y - 1;
-                xOffset = MapData.Width / 2;
-            }
-
-            mapY = Mathf.Clamp(y, 0, MapData.Height - 1);
-            mapX = WrapX(rawX + xOffset);
+            mapX = WrapX(rawX);
+            mapY = Mathf.Clamp(rawY, 0, MapData.Height - 1);
         }
 
         private Color GetColorAt(int mapX, int mapY, out bool isBorderLeft, out bool isBorderTop, out byte ownerId)
@@ -254,8 +281,7 @@ namespace Jogomania.Core
         private byte GetOwnerAt(int mapX, int mapY)
         {
             if (MapData == null || MapData.Height <= 0) return 0;
-            int normX = WrapX(mapX);
-            int normY = WrapY(mapY);
+            NormalizePaperTile(mapX, mapY, out int normX, out int normY);
             int cx = normX / Data.ChunkData.CHUNK_SIZE;
             int cy = normY / Data.ChunkData.CHUNK_SIZE;
             if (MapData.Chunks.TryGetValue(new Vector2I(cx, cy), out var chunk))
@@ -273,6 +299,35 @@ namespace Jogomania.Core
         {
             int wrapped = y % MapData.Height;
             return wrapped < 0 ? wrapped + MapData.Height : wrapped;
+        }
+
+        private Vector3 RawMapToSphereDirection(float rawX, float rawY)
+        {
+            if (MapData == null || MapData.Width <= 0 || MapData.Height <= 0) return Vector3.Forward;
+
+            float x = rawX - Mathf.Floor(rawX / MapData.Width) * MapData.Width;
+            float y = Mathf.Clamp(rawY, 0f, MapData.Height - 1f);
+            return PlanetMeshBuilder.MapToSphereDirection(x, y, MapData.Width, MapData.Height);
+        }
+
+        private void GetNearestDisplayDelta(int mapX, int mapY, out float bestDx, out float bestDy)
+        {
+            bestDx = mapX - CenterX;
+            bestDy = mapY - CenterY;
+            float bestDist = bestDx * bestDx + bestDy * bestDy;
+            for (int kx = -1; kx <= 1; kx++)
+                TestDisplayCandidate(mapX + kx * MapData.Width, mapY, ref bestDx, ref bestDy, ref bestDist);
+        }
+
+        private void TestDisplayCandidate(float rawX, float rawY, ref float bestDx, ref float bestDy, ref float bestDist)
+        {
+            float dx = rawX - CenterX;
+            float dy = rawY - CenterY;
+            float dist = dx * dx + dy * dy;
+            if (dist >= bestDist) return;
+            bestDist = dist;
+            bestDx = dx;
+            bestDy = dy;
         }
     }
 }

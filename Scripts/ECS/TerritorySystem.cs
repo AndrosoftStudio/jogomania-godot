@@ -108,8 +108,9 @@ namespace Jogomania.ECS
 
         private void TryExpandTo(int x, int y, byte ownerId, Queue<Vector2I> frontier)
         {
-            // Evita sair do mapa horizontalmente (Opcional: Wrap-around implementado aqui no futuro)
-            if (x < 0 || x >= _mapData.Dimensions.X || y < 0 || y >= _mapData.Dimensions.Y) return;
+            if (_mapData == null || _mapData.Width <= 0 || _mapData.Height <= 0) return;
+            x = WrapMap(x, _mapData.Width);
+            y = WrapMap(y, _mapData.Height);
 
             int chunkX = x / ChunkData.CHUNK_SIZE;
             int chunkY = y / ChunkData.CHUNK_SIZE;
@@ -136,6 +137,13 @@ namespace Jogomania.ECS
                     frontier.Enqueue(new Vector2I(x, y));
                 }
             }
+        }
+
+        private static int WrapMap(int value, int period)
+        {
+            if (period <= 0) return 0;
+            int wrapped = value % period;
+            return wrapped < 0 ? wrapped + period : wrapped;
         }
     }
 }

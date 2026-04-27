@@ -24,6 +24,11 @@ namespace Jogomania.Data
         public int MoonTextureHeight { get; set; } = 0;
         public byte[] MoonTextureData { get; set; }
 
+        public int SunTextureWidth { get; set; } = 0;
+        public int SunTextureHeight { get; set; } = 0;
+        public byte[] SunTextureData { get; set; }
+        public int CelestialTextureVersion { get; set; } = 0;
+
         [System.Text.Json.Serialization.JsonIgnore]
         public Dictionary<Vector2I, ChunkData> Chunks { get; set; } = new Dictionary<Vector2I, ChunkData>();
 

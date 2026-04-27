@@ -11,6 +11,7 @@ namespace Jogomania.UI
         private TextureRect _texturePreview;
         private Label _labelInfo;
         private Button _btnContinue;
+        private int _previewRequestId = 0;
 
         public override void _Ready()
         {
@@ -22,9 +23,11 @@ namespace Jogomania.UI
 
         private async void LoadLatestSavePreview()
         {
+            int requestId = ++_previewRequestId;
             string savePath = Path.Combine(GameManager.Instance.GetPartidasDir(), "Slot_1", "save_atual.json");
             if (!File.Exists(savePath))
             {
+                if (!CanApplyPreviewResult(requestId)) return;
                 _btnContinue.Disabled = true;
                 _labelInfo.Text = "Nenhuma Partida Salva no Slot 1";
                 return;
@@ -33,6 +36,7 @@ namespace Jogomania.UI
             _btnContinue.Disabled = false;
             _labelInfo.Text = "Lendo Dados do Save...";
             MapData previewData = await Task.Run(() => GameManager.LoadMap(savePath));
+            if (!CanApplyPreviewResult(requestId)) return;
             if (previewData == null)
             {
                 _btnContinue.Disabled = true;
@@ -42,8 +46,23 @@ namespace Jogomania.UI
 
             _labelInfo.Text = $"Ano: 1 | Faccao: Jogador | Mapa: {previewData.Width}x{previewData.Height}";
             Image previewImage = await Task.Run(() => GeneratePreviewImage(previewData));
+            if (!CanApplyPreviewResult(requestId)) return;
             if (previewImage != null)
                 _texturePreview.Texture = ImageTexture.CreateFromImage(previewImage);
+        }
+
+        public override void _ExitTree()
+        {
+            _previewRequestId++;
+        }
+
+        private bool CanApplyPreviewResult(int requestId)
+        {
+            return requestId == _previewRequestId
+                && GodotObject.IsInstanceValid(this)
+                && GodotObject.IsInstanceValid(_labelInfo)
+                && GodotObject.IsInstanceValid(_btnContinue)
+                && GodotObject.IsInstanceValid(_texturePreview);
         }
 
         private Image GeneratePreviewImage(MapData mapData)

@@ -37,7 +37,7 @@ namespace Jogomania.Map
         private static void AddVertex(SurfaceTool surface, MapData mapData, float u, float v)
         {
             int mapX = WrapX(Mathf.FloorToInt(u * mapData.Width), mapData.Width);
-            int mapY = Mathf.Clamp(Mathf.FloorToInt(v * mapData.Height), 0, mapData.Height - 1);
+            int mapY = WrapY(Mathf.FloorToInt(v * mapData.Height), mapData.Height);
             float height = GetSmoothedTerrainHeight(mapData, mapX, mapY);
             Vector3 normal = UvToSphereDirection(u, v);
             surface.SetNormal(normal);
@@ -108,7 +108,7 @@ namespace Jogomania.Map
                 foreach (int ox in offsets)
                 {
                     if (ox == 0 && oy == 0) continue;
-                    int sampleY = Mathf.Clamp(mapY + oy, 0, mapData.Height - 1);
+                    int sampleY = WrapY(mapY + oy, mapData.Height);
                     sum += GetTerrainHeight(GetTerrainAt(mapData, mapX + ox, sampleY));
                     weight += 1.0f;
                 }
@@ -126,7 +126,7 @@ namespace Jogomania.Map
         {
             if (mapData == null || mapData.Width <= 0 || mapData.Height <= 0) return 0;
             mapX = WrapX(mapX, mapData.Width);
-            if (mapY < 0 || mapY >= mapData.Height) return 0;
+            mapY = WrapY(mapY, mapData.Height);
 
             int cx = mapX / ChunkData.CHUNK_SIZE;
             int cy = mapY / ChunkData.CHUNK_SIZE;
@@ -143,6 +143,13 @@ namespace Jogomania.Map
             if (width <= 0) return 0;
             int wrapped = x % width;
             return wrapped < 0 ? wrapped + width : wrapped;
+        }
+
+        private static int WrapY(int y, int height)
+        {
+            if (height <= 0) return 0;
+            int wrapped = y % height;
+            return wrapped < 0 ? wrapped + height : wrapped;
         }
     }
 }

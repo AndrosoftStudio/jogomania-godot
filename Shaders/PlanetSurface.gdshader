@@ -56,7 +56,21 @@ void fragment() {
     float ocean = texture(ocean_mask, UV).r;
     vec3 n = normalize(world_normal);
     vec3 sun = normalize(sun_direction);
-    float day = smoothstep(-0.18, 0.26, dot(n, sun));
+    float sun_dot = dot(n, sun);
+
+    // --- CONTROLE DA SOMBRA (DIA E NOITE) ---
+    // Para não haver linha dura ("começa do nada"), calculamos a iluminação esférica real (Wrapped Lambert).
+    // O degradê inicia de forma invisível no meio do dia (1.0) e morre suavemente em -0.30.
+    float wrap = 0.30;       // 30% do caminho para dentro da noite
+    float min_light = 0.02;  // Luz mínima do breu
+    float max_light = 1.0;   // Intensidade máxima
+    
+    // Gradiente natural que flui por toda a esfera, eliminando a "quina" visual
+    float light_gradient = clamp((sun_dot + wrap) / (1.0 + wrap), 0.0, 1.0);
+    light_gradient = smoothstep(0.0, 1.0, light_gradient); // Caimento volumétrico perfeito
+    float surface_light = mix(min_light, max_light, light_gradient);
+    
+    float day = smoothstep(0.0, 0.25, sun_dot); // Nuvens e brilho alinhados com o horizonte atmosférico
 
     float waves = (sin(UV.x * 90.0 + time_offset * 0.55) + sin((UV.x + UV.y) * 55.0 - time_offset * 0.8)) * 0.5;
     vec3 ocean_tint = vec3(0.02, 0.14, 0.26) + waves * 0.014;
@@ -66,11 +80,11 @@ void fragment() {
     vec3 reflected = reflect(-sun, n);
     float spec = pow(max(dot(view_dir, reflected), 0.0), 56.0) * ocean * day * 0.30;
 
-    color *= mix(0.045, 1.0, day);
+    color *= surface_light;
 
     float clouds = cloud_mask(n, time_offset);
-    float cloud_alpha = clouds * mix(0.28, 0.54, day);
-    vec3 cloud_lit = mix(vec3(0.004, 0.006, 0.010), vec3(0.88, 0.94, 1.0), day);
+    float cloud_alpha = clouds * mix(0.02, 0.46, day);
+    vec3 cloud_lit = mix(vec3(0.001, 0.002, 0.004), vec3(0.88, 0.94, 1.0), day);
     color = mix(color, cloud_lit, cloud_alpha);
 
     color += vec3(spec);
