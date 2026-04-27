@@ -13,10 +13,11 @@ config_version=5
 config/name="Jogomania"
 run/main_scene="res://Scenes/MainMenu.tscn"
 config/features=PackedStringArray("4.6", "C#", "GL Compatibility")
-config/icon="res://icon.svg"
+config/icon="res://public/logo.png"
 
 [autoload]
 
+LocalizationManager="*res://Scripts/Core/LocalizationManager.cs"
 GameManager="*res://Scripts/Core/GameManager.cs"
 
 [dotnet]

@@ -19,6 +19,8 @@ namespace Jogomania.Core
 		private const float SunSpeed = 0.005f;
 
 		private Label _labelStatus;
+		private Button _btnBack;
+		private Button _btnSettle;
 		private Camera2D _camera2D;
 		private TacticalView _tacticalView;
 		private bool _isTacticalMode;
@@ -70,6 +72,8 @@ namespace Jogomania.Core
 		private bool _isGameStarted;
 		private bool _showVillageNames;
 		private Button _btnToggleNames;
+		private string _statusKey = "game_loading_world";
+		private object[] _statusArgs = System.Array.Empty<object>();
 
 		public override void _Ready()
 		{
@@ -84,14 +88,26 @@ namespace Jogomania.Core
 			_tacticalView = new TacticalView { Visible = false };
 			AddChild(_tacticalView);
 
+			_btnBack = GetNode<Button>("CanvasLayer/HUD/TopPanel/HBoxContainer/BtnBack");
 			_labelStatus = GetNode<Label>("CanvasLayer/HUD/TopPanel/HBoxContainer/LabelStatus");
+			_btnSettle = GetNode<Button>("CanvasLayer/HUD/BottomPanel/BtnSettle");
 			_territorySystem = new TerritorySystem();
 			AddChild(_territorySystem);
 
+			if (LocalizationManager.Instance != null)
+				LocalizationManager.Instance.OnLanguageChanged += UpdateTexts;
+
 			SetupSpaceEnvironment();
 			SetupPlanetCollider();
-			InitializeMatch();
 			SetupMobileNameButton();
+			UpdateTexts();
+			InitializeMatch();
+		}
+
+		public override void _ExitTree()
+		{
+			if (LocalizationManager.Instance != null)
+				LocalizationManager.Instance.OnLanguageChanged -= UpdateTexts;
 		}
 
 		private void SetupPlanetCollider()
@@ -108,7 +124,7 @@ namespace Jogomania.Core
 		{
 			_btnToggleNames = new Button
 			{
-				Text = "Nomes",
+				Text = Tr("game_names"),
 				CustomMinimumSize = new Vector2(90, 36),
 				ToggleMode = true
 			};
@@ -116,6 +132,35 @@ namespace Jogomania.Core
 
 			var topBar = GetNodeOrNull<HBoxContainer>("CanvasLayer/HUD/TopPanel/HBoxContainer");
 			topBar?.AddChild(_btnToggleNames);
+		}
+
+		private void UpdateTexts()
+		{
+			if (_btnBack != null) _btnBack.Text = Tr("game_save_exit");
+			if (_btnSettle != null) _btnSettle.Text = Tr("game_settle");
+			if (_btnToggleNames != null) _btnToggleNames.Text = Tr("game_names");
+			RefreshStatusText();
+		}
+
+		private void SetStatus(string key, params object[] args)
+		{
+			_statusKey = key;
+			_statusArgs = args ?? System.Array.Empty<object>();
+			RefreshStatusText();
+		}
+
+		private void RefreshStatusText()
+		{
+			if (_labelStatus == null) return;
+			string text = Tr(_statusKey);
+			if (_statusArgs.Length > 0)
+				text = string.Format(text, _statusArgs);
+			_labelStatus.Text = text;
+		}
+
+		private string Tr(string key)
+		{
+			return LocalizationManager.Instance?.Translate(key) ?? key;
 		}
 
 		private void SetupSpaceEnvironment()
@@ -690,27 +735,27 @@ namespace Jogomania.Core
 
 			if (!File.Exists(currentMatchFile))
 			{
-				_labelStatus.Text = "NENHUM MAPA ENCONTRADO!";
+				SetStatus("game_no_map");
 				GD.PrintErr("Arquivo da partida nao encontrado.");
 				return;
 			}
 
-			_labelStatus.Text = "Carregando Mundo...";
+			SetStatus("game_loading_world");
 			_loadedMapData = await Task.Run(() => GameManager.LoadMap(currentMatchFile));
 			if (_loadedMapData == null)
 			{
-				_labelStatus.Text = "ERRO AO CARREGAR MAPA!";
+				SetStatus("game_map_error");
 				return;
 			}
 
 			RenderCurrentMapData();
-			_labelStatus.Text = "Pronto para Desembarcar!";
+			SetStatus("game_ready_settle");
 			SpawnInitialCaravan();
 		}
 
 		private async void RenderCurrentMapData()
 		{
-			_labelStatus.Text = "Costurando Globo 3D...";
+			SetStatus("game_stitching_globe");
 			_globeImage = await Task.Run(GenerateGlobeImage);
 			Image oceanMask = await Task.Run(GenerateOceanMaskImage);
 
@@ -1078,15 +1123,16 @@ namespace Jogomania.Core
 		private void HandlePan(Vector2 relative, bool fromTouch)
 		{
 			if (relative.LengthSquared() > 4.0f) _wasDragging = true;
+			float sensitivity = fromTouch ? GetMobileSensitivity() : 1.0f;
 			if (!_isTacticalMode)
 			{
-				_cameraYaw -= relative.X * 0.005f;
-				_cameraPitch = Mathf.Clamp(_cameraPitch + relative.Y * 0.005f, -1.4f, 1.4f);
+				_cameraYaw -= relative.X * 0.005f * sensitivity;
+				_cameraPitch = Mathf.Clamp(_cameraPitch + relative.Y * 0.005f * sensitivity, -1.4f, 1.4f);
 				UpdateCameraOrbit();
 			}
 			else
 			{
-				_camera2D.Position -= relative;
+				_camera2D.Position -= relative * sensitivity;
 				_camera2D.Position = _tacticalView.ClampCameraPosition(_camera2D.Position);
 			}
 		}
@@ -1105,16 +1151,17 @@ namespace Jogomania.Core
 			if (Mathf.Abs(delta) < 2f) return;
 
 			Vector2 pinchCenter = (_finger0Pos + _finger1Pos) * 0.5f;
+			float sensitivity = GetMobileSensitivity();
 			if (!_isTacticalMode)
 			{
-				_cameraDistance = Mathf.Clamp(_cameraDistance - delta * 0.005f, TacticalEntryDistance, MaxGlobeDistance);
+				_cameraDistance = Mathf.Clamp(_cameraDistance - delta * 0.005f * sensitivity, TacticalEntryDistance, MaxGlobeDistance);
 				UpdateCameraOrbit();
 				if (_cameraDistance <= TacticalEntryDistance) EnterTacticalMode(pinchCenter);
 			}
 			else
 			{
 				float oldZoom = _tacticalView.ZoomLevel;
-				float newZoom = oldZoom * (1f + delta * 0.008f);
+				float newZoom = oldZoom * (1f + delta * 0.008f * sensitivity);
 				if (newZoom < TacticalExitZoom) ExitTacticalMode();
 				else
 				{
@@ -1124,6 +1171,11 @@ namespace Jogomania.Core
 					_tacticalView.ZoomLevel = newZoom;
 				}
 			}
+		}
+
+		private float GetMobileSensitivity()
+		{
+			return Mathf.Clamp(GameManager.Instance?.Settings?.MobileSensitivity ?? 1.0f, 0.1f, 3.0f);
 		}
 
 		private void SelectStartingVillage(Vector2 screenPos)
@@ -1147,7 +1199,7 @@ namespace Jogomania.Core
 
 		private void SpawnInitialCaravan()
 		{
-			_labelStatus.Text = "Selecione uma Aldeia Amarela clicando nela!";
+			SetStatus("game_select_yellow_village");
 		}
 
 		private void StartGameAs(VillageData village)
@@ -1156,7 +1208,7 @@ namespace Jogomania.Core
 			_playerCapital.OwnerId = 1;
 			_isGameStarted = true;
 			GetNode<Control>("CanvasLayer/HUD/BottomPanel").Visible = false;
-			_labelStatus.Text = $"Voce assumiu o controle de {village.Name}! Expansao iniciada.";
+			SetStatus("game_assumed_control", village.Name);
 			_territorySystem.StartSimulation(_loadedMapData, UpdateGlobePixel);
 			_territorySystem.RegisterVillage(new Vector2I(village.X, village.Y), 1);
 		}

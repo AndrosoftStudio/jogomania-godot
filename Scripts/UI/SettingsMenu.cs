@@ -1,5 +1,6 @@
 using Godot;
 using Jogomania.Core;
+using System.Collections.Generic;
 
 namespace Jogomania.UI
 {
@@ -9,11 +10,12 @@ namespace Jogomania.UI
         private OptionButton _optLanguage;
         
         // Video Settings
+        private OptionButton _optWindowMode;
         private OptionButton _optResolution;
-        private CheckBox _chkFullscreen;
         private HSlider _sldRenderScale;
         private CheckBox _chkVSync;
         private OptionButton _optAntiAliasing;
+        private HSlider _sldMobileSensitivity;
 
         // Controls
         private VBoxContainer _pcControlsContainer;
@@ -22,6 +24,8 @@ namespace Jogomania.UI
         // Labels textuais para tradução em tempo real
         private Label _titleLabel;
         private Label _lblLang;
+        private Label _lblWindowMode;
+        private Label _lblResolution;
         private Label _lblScale;
         private Label _lblAA;
         private Label _lblPcControls;
@@ -92,7 +96,7 @@ namespace Jogomania.UI
             _btnClose = new Button { Text = "Voltar / Salvar", CustomMinimumSize = new Vector2(200, 50), SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter };
             _btnClose.Pressed += () => 
             {
-                SaveSettingsToDisk();
+                SaveAndApplySettings();
                 if (GetParent() == GetTree().Root)
                 {
                     GameManager.Instance?.GoToMainMenu();
@@ -131,12 +135,7 @@ namespace Jogomania.UI
             _optLanguage.SetItemMetadata(4, "zh");
             _optLanguage.AddItem("Русский (Russian)", 5);
             _optLanguage.SetItemMetadata(5, "ru");
-            
-            _optLanguage.ItemSelected += (long idx) => {
-                string code = (string)_optLanguage.GetItemMetadata((int)idx);
-                if (LocalizationManager.Instance != null)
-                    LocalizationManager.Instance.LoadLanguage(code);
-            };
+
             hbLang.AddChild(_optLanguage);
             vbox.AddChild(hbLang);
         }
@@ -151,24 +150,35 @@ namespace Jogomania.UI
             var vbox = new VBoxContainer();
             tab.AddChild(vbox);
 
-            _chkFullscreen = new CheckBox { Text = "Tela Cheia (Fullscreen)" };
-            _chkFullscreen.Toggled += (on) => {
-                DisplayServer.WindowSetMode(on ? DisplayServer.WindowMode.Fullscreen : DisplayServer.WindowMode.Windowed);
-            };
-            vbox.AddChild(_chkFullscreen);
+            if (!IsMobilePlatform())
+            {
+                var hbWindowMode = new HBoxContainer();
+                _lblWindowMode = new Label { Text = "Modo de Janela:" };
+                hbWindowMode.AddChild(_lblWindowMode);
+                _optWindowMode = new OptionButton();
+                _optWindowMode.AddItem("Janela", (int)VideoWindowMode.Windowed);
+                _optWindowMode.AddItem("Tela Cheia", (int)VideoWindowMode.Fullscreen);
+                _optWindowMode.AddItem("Janela Sem Bordas", (int)VideoWindowMode.Borderless);
+                hbWindowMode.AddChild(_optWindowMode);
+                vbox.AddChild(hbWindowMode);
+
+                var hbResolution = new HBoxContainer();
+                _lblResolution = new Label { Text = "Resolucao:" };
+                hbResolution.AddChild(_lblResolution);
+                _optResolution = new OptionButton();
+                PopulateResolutionOptions();
+                hbResolution.AddChild(_optResolution);
+                vbox.AddChild(hbResolution);
+            }
 
             var hbScale = new HBoxContainer();
             _lblScale = new Label { Text = "Render Scale (Resolução Interna 3D):" };
             hbScale.AddChild(_lblScale);
             _sldRenderScale = new HSlider { MinValue = 0.5f, MaxValue = 2.0f, Step = 0.1f, Value = 1.0f, CustomMinimumSize = new Vector2(200, 0) };
-            _sldRenderScale.ValueChanged += (val) => { GetViewport().Scaling3DScale = (float)val; };
             hbScale.AddChild(_sldRenderScale);
             vbox.AddChild(hbScale);
 
             _chkVSync = new CheckBox { Text = "Sincronização Vertical (V-Sync)" };
-            _chkVSync.Toggled += (on) => {
-                DisplayServer.WindowSetVsyncMode(on ? DisplayServer.VSyncMode.Enabled : DisplayServer.VSyncMode.Disabled);
-            };
             vbox.AddChild(_chkVSync);
 
             var hbAA = new HBoxContainer();
@@ -179,7 +189,6 @@ namespace Jogomania.UI
             _optAntiAliasing.AddItem("2x (MSAA)");
             _optAntiAliasing.AddItem("4x (MSAA)");
             _optAntiAliasing.AddItem("8x (MSAA)");
-            _optAntiAliasing.ItemSelected += (idx) => { GetViewport().Msaa3D = (Viewport.Msaa)(int)idx; };
             hbAA.AddChild(_optAntiAliasing);
             vbox.AddChild(hbAA);
         }
@@ -207,11 +216,11 @@ namespace Jogomania.UI
             _mobileControlsContainer = new VBoxContainer();
             _lblMobileControls = new Label { Text = "-- Controles de Celular (Toque) --" };
             _mobileControlsContainer.AddChild(_lblMobileControls);
-            var sldSens = new HSlider { MinValue = 0.1f, MaxValue = 3.0f, Value = 1.0f, CustomMinimumSize = new Vector2(200, 0) };
+            _sldMobileSensitivity = new HSlider { MinValue = 0.1f, MaxValue = 3.0f, Step = 0.1f, Value = 1.0f, CustomMinimumSize = new Vector2(200, 0) };
             var hbSens = new HBoxContainer();
             _lblSens = new Label { Text = "Sensibilidade de Rotação/Pinch:" };
             hbSens.AddChild(_lblSens);
-            hbSens.AddChild(sldSens);
+            hbSens.AddChild(_sldMobileSensitivity);
             _mobileControlsContainer.AddChild(hbSens);
             vbox.AddChild(_mobileControlsContainer);
         }
@@ -234,40 +243,115 @@ namespace Jogomania.UI
 
         private void LoadCurrentSettings()
         {
-            _chkFullscreen.ButtonPressed = DisplayServer.WindowGetMode() == DisplayServer.WindowMode.Fullscreen;
-            _chkVSync.ButtonPressed = DisplayServer.WindowGetVsyncMode() != DisplayServer.VSyncMode.Disabled;
-            _sldRenderScale.Value = GetViewport().Scaling3DScale;
-            _optAntiAliasing.Selected = (int)GetViewport().Msaa3D;
+            UserSettings settings = GameManager.Instance?.Settings?.Clone() ?? UserSettings.Load();
 
-            if (LocalizationManager.Instance != null)
+            SelectWindowMode(settings.WindowMode);
+            SelectResolution(new Vector2I(settings.ResolutionWidth, settings.ResolutionHeight));
+            _chkVSync.ButtonPressed = settings.VSync;
+            _sldRenderScale.Value = settings.RenderScale;
+            _optAntiAliasing.Selected = Mathf.Clamp(settings.AntiAliasing, 0, _optAntiAliasing.ItemCount - 1);
+            _sldMobileSensitivity.Value = settings.MobileSensitivity;
+            _chkFps.ButtonPressed = settings.ShowFps;
+            SelectLanguage(settings.Language);
+        }
+
+        private void SelectLanguage(string lang)
+        {
+            for (int i = 0; i < _optLanguage.ItemCount; i++)
             {
-                string lang = LocalizationManager.Instance.CurrentLanguage;
-                for (int i = 0; i < _optLanguage.ItemCount; i++)
+                if ((string)_optLanguage.GetItemMetadata(i) == lang)
                 {
-                    if ((string)_optLanguage.GetItemMetadata(i) == lang)
-                    {
-                        _optLanguage.Selected = i;
-                        break;
-                    }
+                    _optLanguage.Selected = i;
+                    return;
                 }
+            }
+
+            _optLanguage.Selected = 0;
+        }
+
+        private void SaveAndApplySettings()
+        {
+            var settings = new UserSettings
+            {
+                Language = _optLanguage.Selected >= 0 ? (string)_optLanguage.GetItemMetadata(_optLanguage.Selected) : "pt-BR",
+                WindowMode = GetSelectedWindowMode(),
+                ResolutionWidth = GetSelectedResolution().X,
+                ResolutionHeight = GetSelectedResolution().Y,
+                VSync = _chkVSync.ButtonPressed,
+                RenderScale = (float)_sldRenderScale.Value,
+                AntiAliasing = _optAntiAliasing.Selected,
+                MobileSensitivity = (float)_sldMobileSensitivity.Value,
+                ShowFps = _chkFps.ButtonPressed
+            };
+
+            GameManager.Instance?.SaveAndApplyUserSettings(settings);
+        }
+
+        private void PopulateResolutionOptions()
+        {
+            if (_optResolution == null) return;
+            _optResolution.Clear();
+
+            List<Vector2I> resolutions = VideoResolutionProvider.GetAvailable16By9Resolutions();
+            foreach (Vector2I resolution in resolutions)
+            {
+                _optResolution.AddItem($"{resolution.X} x {resolution.Y}");
+                _optResolution.SetItemMetadata(_optResolution.ItemCount - 1, resolution);
             }
         }
 
-        private void SaveSettingsToDisk()
+        private void SelectWindowMode(VideoWindowMode mode)
         {
-            var config = new ConfigFile();
-            config.SetValue("Video", "Fullscreen", _chkFullscreen.ButtonPressed);
-            config.SetValue("Video", "VSync", _chkVSync.ButtonPressed);
-            config.SetValue("Video", "RenderScale", _sldRenderScale.Value);
-            config.SetValue("Video", "AntiAliasing", _optAntiAliasing.Selected);
-            config.SetValue("General", "Language", LocalizationManager.Instance != null ? LocalizationManager.Instance.CurrentLanguage : "pt-BR");
-            config.Save("user://settings.cfg");
+            if (_optWindowMode == null) return;
+            for (int i = 0; i < _optWindowMode.ItemCount; i++)
+            {
+                if (_optWindowMode.GetItemId(i) == (int)mode)
+                {
+                    _optWindowMode.Selected = i;
+                    return;
+                }
+            }
+            _optWindowMode.Selected = 0;
+        }
+
+        private VideoWindowMode GetSelectedWindowMode()
+        {
+            if (_optWindowMode == null || _optWindowMode.Selected < 0)
+                return GameManager.Instance?.Settings?.WindowMode ?? VideoWindowMode.Windowed;
+
+            return (VideoWindowMode)_optWindowMode.GetItemId(_optWindowMode.Selected);
+        }
+
+        private void SelectResolution(Vector2I resolution)
+        {
+            if (_optResolution == null || _optResolution.ItemCount == 0) return;
+            for (int i = 0; i < _optResolution.ItemCount; i++)
+            {
+                if ((Vector2I)_optResolution.GetItemMetadata(i) == resolution)
+                {
+                    _optResolution.Selected = i;
+                    return;
+                }
+            }
+            _optResolution.Selected = 0;
+        }
+
+        private Vector2I GetSelectedResolution()
+        {
+            if (_optResolution == null || _optResolution.Selected < 0)
+            {
+                UserSettings current = GameManager.Instance?.Settings;
+                return current != null
+                    ? new Vector2I(current.ResolutionWidth, current.ResolutionHeight)
+                    : DisplayServer.ScreenGetSize(DisplayServer.WindowGetCurrentScreen());
+            }
+
+            return (Vector2I)_optResolution.GetItemMetadata(_optResolution.Selected);
         }
 
         private void AdaptToPlatform()
         {
-            string osName = OS.GetName();
-            bool isMobile = osName == "Android" || osName == "iOS";
+            bool isMobile = IsMobilePlatform();
 
             if (isMobile)
             {
@@ -296,13 +380,29 @@ namespace Jogomania.UI
                 _tabs.SetTabTitle(3, loc.Translate("settings_extras"));
             }
             if (_lblLang != null) _lblLang.Text = loc.Translate("settings_language");
-            if (_chkFullscreen != null) _chkFullscreen.Text = loc.Translate("settings_fullscreen");
+            if (_lblWindowMode != null) _lblWindowMode.Text = loc.Translate("settings_window_mode");
+            if (_lblResolution != null) _lblResolution.Text = loc.Translate("settings_resolution");
+            if (_optWindowMode != null && _optWindowMode.ItemCount >= 3)
+            {
+                _optWindowMode.SetItemText(0, loc.Translate("settings_windowed"));
+                _optWindowMode.SetItemText(1, loc.Translate("settings_fullscreen"));
+                _optWindowMode.SetItemText(2, loc.Translate("settings_borderless"));
+            }
             if (_lblScale != null) _lblScale.Text = loc.Translate("settings_render_scale");
             if (_chkVSync != null) _chkVSync.Text = loc.Translate("settings_vsync");
             if (_lblAA != null) _lblAA.Text = loc.Translate("settings_aa");
             if (_lblPcControls != null) _lblPcControls.Text = loc.Translate("settings_pc_controls");
             if (_lblMobileControls != null) _lblMobileControls.Text = loc.Translate("settings_mobile_controls");
+            if (_lblSens != null) _lblSens.Text = loc.Translate("settings_mobile_sensitivity");
+            if (_lblCredits != null) _lblCredits.Text = loc.Translate("settings_credits");
+            if (_chkFps != null) _chkFps.Text = loc.Translate("settings_show_fps");
             if (_btnClose != null) _btnClose.Text = loc.Translate("settings_save_return");
+        }
+
+        private bool IsMobilePlatform()
+        {
+            string osName = OS.GetName();
+            return osName == "Android" || osName == "iOS";
         }
     }
 }

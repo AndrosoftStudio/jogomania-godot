@@ -47,6 +47,12 @@ namespace Jogomania.Editor
 
         private SpinBox _villageCountInput;
         private CheckBox _toggleBordersCheckbox;
+        private Label _labelVillages;
+        private Button _btnNames;
+        private Button _btnLoadSave;
+        private Label _labelMapName;
+        private Label _labelSavedMaps;
+        private Button _btnLoadSelectedMap;
 
         private Camera3D _camera3D;
         private Camera2D _camera2D;
@@ -111,10 +117,9 @@ namespace Jogomania.Editor
             CreateBodySelector();
             CreateMapFileControls(vbox);
 
-            var labelVillages = new Label();
-            labelVillages.Text = "Quantidade de Aldeias Iniciais:";
-            vbox.AddChild(labelVillages);
-            vbox.MoveChild(labelVillages, 6); // Acima do gerador procedural
+            _labelVillages = new Label();
+            vbox.AddChild(_labelVillages);
+            vbox.MoveChild(_labelVillages, 6); // Acima do gerador procedural
 
             _villageCountInput = new SpinBox();
             _villageCountInput.MinValue = 0;
@@ -131,19 +136,17 @@ namespace Jogomania.Editor
             vbox.MoveChild(_toggleBordersCheckbox, 8);
 
             // BotÃ£o mobile para ver nomes de aldeias
-            var btnNames = new Button();
-            btnNames.Text = "ðŸ˜ Nomes";
-            btnNames.ToggleMode = true;
-            btnNames.Toggled += (on) => { _tacticalView.ShowVillageNames = on; };
-            vbox.AddChild(btnNames);
-            vbox.MoveChild(btnNames, 9);
+            _btnNames = new Button();
+            _btnNames.ToggleMode = true;
+            _btnNames.Toggled += (on) => { _tacticalView.ShowVillageNames = on; };
+            vbox.AddChild(_btnNames);
+            vbox.MoveChild(_btnNames, 9);
 
             // BotÃ£o: Carregar Partida do Jogo (save_atual.json do Slot 1)
-            var btnLoadSave = new Button();
-            btnLoadSave.Text = "ðŸ“‚ Carregar Partida Salva";
-            btnLoadSave.Pressed += OnBtnLoadGameSavePressed;
-            vbox.AddChild(btnLoadSave);
-            vbox.MoveChild(btnLoadSave, 10);
+            _btnLoadSave = new Button();
+            _btnLoadSave.Pressed += OnBtnLoadGameSavePressed;
+            vbox.AddChild(_btnLoadSave);
+            vbox.MoveChild(_btnLoadSave, 10);
 
             _loadingPanel = GetNode<Control>("UILayer/LoadingPanel");
             _progressBar = GetNode<ProgressBar>("UILayer/LoadingPanel/VBoxContainer/ProgressBar");
@@ -156,14 +159,132 @@ namespace Jogomania.Editor
             _saveFeedback.SizeFlagsHorizontal = Control.SizeFlags.Fill;
 
             _overwriteDialog = new ConfirmationDialog();
-            _overwriteDialog.Title = "Mapa ja existe";
-            _overwriteDialog.OkButtonText = "Sobrescrever";
-            _overwriteDialog.GetCancelButton().Text = "Criar copia";
             _overwriteDialog.Confirmed += OnOverwriteConfirmed;
             _overwriteDialog.Canceled += OnOverwriteDeclined;
             AddChild(_overwriteDialog);
 
+            if (LocalizationManager.Instance != null)
+                LocalizationManager.Instance.OnLanguageChanged += UpdateTexts;
+
+            UpdateTexts();
             RefreshSavedMapList();
+        }
+
+        public override void _ExitTree()
+        {
+            if (LocalizationManager.Instance != null)
+                LocalizationManager.Instance.OnLanguageChanged -= UpdateTexts;
+        }
+
+        private void UpdateTexts()
+        {
+            SetNodeText<Button>("UILayer/UIControl/VBoxContainer/BtnLoadImage", "map_load_image");
+            SetNodeText<Button>("UILayer/UIControl/VBoxContainer/BtnTogglePreview", "map_toggle_image");
+            SetNodeText<Label>("UILayer/UIControl/VBoxContainer/LabelImg", "map_image_options");
+            SetNodeText<Label>("UILayer/UIControl/VBoxContainer/HBoxLandColor/Label", "map_land_color");
+            SetNodeText<CheckBox>("UILayer/UIControl/VBoxContainer/CheckHeightmap", "map_use_grayscale_height");
+            SetNodeText<Label>("UILayer/UIControl/VBoxContainer/HBoxSeed/Label", "map_seed");
+            SetNodeText<Button>("UILayer/UIControl/VBoxContainer/BtnGenerateImage", "map_mix_image");
+            SetNodeText<Button>("UILayer/UIControl/VBoxContainer/BtnGenerateNoise", "map_generate_noise");
+            SetNodeText<Button>("UILayer/UIControl/VBoxContainer/BtnLoadMap", "map_load_saved");
+            SetNodeText<Button>("UILayer/UIControl/VBoxContainer/BtnSaveMap", "map_save_current");
+            SetNodeText<Button>("UILayer/UIControl/VBoxContainer/BtnExportMap", "map_export");
+            SetNodeText<Label>("UILayer/UIControl/VBoxContainer/LabelBrush", "map_brush");
+            SetNodeText<Button>("UILayer/UIControl/VBoxContainer/BtnToggle3D", "map_toggle_3d");
+            SetNodeText<Button>("UILayer/UIControl/VBoxContainer/BtnBack", "map_back_menu");
+
+            if (_inputSeed != null)
+                _inputSeed.PlaceholderText = Tr("map_seed_placeholder");
+            if (_optionLandColor != null && _optionLandColor.ItemCount >= 2)
+            {
+                _optionLandColor.SetItemText(0, Tr("map_white_land"));
+                _optionLandColor.SetItemText(1, Tr("map_black_land"));
+            }
+            UpdateBrushOptions();
+            UpdateBodySelectorTexts();
+
+            if (_labelVillages != null) _labelVillages.Text = Tr("map_initial_villages");
+            if (_toggleBordersCheckbox != null) _toggleBordersCheckbox.Text = Tr("map_show_borders");
+            if (_btnNames != null) _btnNames.Text = Tr("map_show_names");
+            if (_btnLoadSave != null) _btnLoadSave.Text = Tr("map_load_game_save");
+            if (_labelMapName != null) _labelMapName.Text = Tr("map_file_name");
+            if (_inputMapName != null) _inputMapName.PlaceholderText = Tr("map_file_placeholder");
+            if (_labelSavedMaps != null) _labelSavedMaps.Text = Tr("map_saved_maps");
+            if (_btnLoadSelectedMap != null) _btnLoadSelectedMap.Text = Tr("map_load_selected");
+            if (_overwriteDialog != null)
+            {
+                _overwriteDialog.Title = Tr("map_dialog_exists_title");
+                _overwriteDialog.OkButtonText = Tr("map_dialog_overwrite");
+                _overwriteDialog.GetCancelButton().Text = Tr("map_dialog_copy");
+            }
+
+            RefreshMetadataBarLabels();
+            if (_optionSavedMaps != null && _optionSavedMaps.Disabled && _optionSavedMaps.ItemCount > 0)
+                _optionSavedMaps.SetItemText(0, Tr("map_no_saved_maps"));
+        }
+
+        private void SetNodeText<T>(string path, string key) where T : Control
+        {
+            if (GetNodeOrNull<T>(path) is Button button)
+                button.Text = Tr(key);
+            else if (GetNodeOrNull<T>(path) is Label label)
+                label.Text = Tr(key);
+            else if (GetNodeOrNull<T>(path) is CheckBox checkBox)
+                checkBox.Text = Tr(key);
+        }
+
+        private void UpdateBrushOptions()
+        {
+            if (_optionBrush == null || _optionBrush.ItemCount < 12) return;
+            string[] names =
+            {
+                "0: Deep Ocean",
+                "1: Shallow Sea",
+                "2: Beach",
+                "3: Plain (Grass)",
+                "4: Forest",
+                "5: Jungle",
+                "6: Savanna",
+                "7: Desert",
+                "8: Tundra",
+                "9: Snow",
+                "10: Mountain",
+                "11: Snow Peak"
+            };
+            for (int i = 0; i < names.Length; i++)
+                _optionBrush.SetItemText(i, names[i]);
+        }
+
+        private void UpdateBodySelectorTexts()
+        {
+            if (_bodySelector == null || _bodySelector.ItemCount < 3) return;
+            _bodySelector.SetItemText(0, Tr("map_body_planet"));
+            _bodySelector.SetItemText(1, Tr("map_body_moon"));
+            _bodySelector.SetItemText(2, Tr("map_body_sun"));
+        }
+
+        private void RefreshMetadataBarLabels()
+        {
+            SetProgressBarLabel(_moonProgressBar, "map_meta_moon");
+            SetProgressBarLabel(_sunProgressBar, "map_meta_sun");
+            SetProgressBarLabel(_riverProgressBar, "map_meta_rivers");
+            SetProgressBarLabel(_resourceProgressBar, "map_meta_resources");
+        }
+
+        private void SetProgressBarLabel(ProgressBar bar, string key)
+        {
+            if (bar?.GetParent() is Node row && row.GetChildCount() > 0 && row.GetChild(0) is Label label)
+                label.Text = Tr(key);
+        }
+
+        private string Tr(string key)
+        {
+            return LocalizationManager.Instance?.Translate(key) ?? key;
+        }
+
+        private string Trf(string key, params object[] args)
+        {
+            return string.Format(Tr(key), args);
         }
 
         private void CreateMetadataProgressBars()
@@ -245,28 +366,24 @@ namespace Jogomania.Editor
 
         private void CreateMapFileControls(VBoxContainer vbox)
         {
-            var nameLabel = new Label();
-            nameLabel.Text = "Nome do arquivo do mapa:";
-            vbox.AddChild(nameLabel);
+            _labelMapName = new Label();
+            vbox.AddChild(_labelMapName);
 
             _inputMapName = new LineEdit();
-            _inputMapName.PlaceholderText = "meu_mapa";
             _inputMapName.Text = "mapa_padrao";
             vbox.AddChild(_inputMapName);
 
-            var loadLabel = new Label();
-            loadLabel.Text = "Mapas salvos:";
-            vbox.AddChild(loadLabel);
+            _labelSavedMaps = new Label();
+            vbox.AddChild(_labelSavedMaps);
 
             var loadRow = new HBoxContainer();
             _optionSavedMaps = new OptionButton();
             _optionSavedMaps.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
             loadRow.AddChild(_optionSavedMaps);
 
-            var btnLoadSelected = new Button();
-            btnLoadSelected.Text = "Carregar Selecionado";
-            btnLoadSelected.Pressed += OnBtnLoadSelectedMapPressed;
-            loadRow.AddChild(btnLoadSelected);
+            _btnLoadSelectedMap = new Button();
+            _btnLoadSelectedMap.Pressed += OnBtnLoadSelectedMapPressed;
+            loadRow.AddChild(_btnLoadSelectedMap);
             vbox.AddChild(loadRow);
         }
 
@@ -291,7 +408,7 @@ namespace Jogomania.Editor
 
         private void OnBtnLoadImagePressed()
         {
-            DisplayServer.FileDialogShow("Carregar Imagem", OS.GetSystemDir(OS.SystemDir.Downloads), "", false, DisplayServer.FileDialogMode.OpenFile, new string[] { "*.png, *.jpg, *.jpeg ; Imagens" }, Callable.From<bool, string[], int>(OnNativeFileSelected));
+            DisplayServer.FileDialogShow(Tr("map_loading_image_dialog"), OS.GetSystemDir(OS.SystemDir.Downloads), "", false, DisplayServer.FileDialogMode.OpenFile, new string[] { Tr("map_file_filter_images") }, Callable.From<bool, string[], int>(OnNativeFileSelected));
         }
 
         private void OnNativeFileSelected(bool status, string[] selectedPaths, int selectedFilterIndex)
@@ -364,15 +481,15 @@ namespace Jogomania.Editor
 
             _loadingPanel.Visible = true;
             _generationProgress = 0f;
-            _labelStatus.Text = "Mixando Biomas com Imagem...";
+            _labelStatus.Text = Tr("map_status_mix_biomes");
 
             _currentMapData = await Task.Run(() => GenerateImageMapData(width, height, imgData, imgW, imgH, blackIsLand, useHeightmap, imageSeed));
 
-            _labelStatus.Text = "Gerando rios e recursos...";
+            _labelStatus.Text = Tr("map_status_rivers_resources");
             SetMetadataBarsVisible(true);
             await Task.Run(() => GenerateWorldMetadata(_currentMapData, width * 31 + height));
             SetMetadataBarsVisible(false);
-            _labelStatus.Text = "Semeando Aldeias...";
+            _labelStatus.Text = Tr("map_status_scatter_villages");
             int vCount = (int)_villageCountInput.Value;
             await Task.Run(() => ScatterVillages(_currentMapData, vCount));
 
@@ -522,18 +639,18 @@ namespace Jogomania.Editor
 
             _loadingPanel.Visible = true;
             _generationProgress = 0f;
-            _labelStatus.Text = "Gerando Globo Perfeito (Equiretangular)...";
+            _labelStatus.Text = Tr("map_status_generating_globe");
 
             string seedStr = _inputSeed.Text;
             int seed = string.IsNullOrWhiteSpace(seedStr) ? (int)GD.Randi() : seedStr.GetHashCode();
 
             _currentMapData = await Task.Run(() => GenerateNoiseMapData(targetWidth, targetHeight, seed));
 
-            _labelStatus.Text = "Gerando rios e recursos...";
+            _labelStatus.Text = Tr("map_status_rivers_resources");
             SetMetadataBarsVisible(true);
             await Task.Run(() => GenerateWorldMetadata(_currentMapData, seed));
             SetMetadataBarsVisible(false);
-            _labelStatus.Text = "Semeando Aldeias...";
+            _labelStatus.Text = Tr("map_status_scatter_villages");
             int vCount = (int)_villageCountInput.Value;
             await Task.Run(() => ScatterVillages(_currentMapData, vCount));
 
@@ -668,20 +785,20 @@ namespace Jogomania.Editor
         private void GenerateWorldMetadata(MapData map, int seed)
         {
             GameManager.RehydrateMap(map);
-            CallDeferred(nameof(UpdateProgressDeferred), 0f, "Gerando textura da Lua...");
+            CallDeferred(nameof(UpdateProgressDeferred), 0f, "@map_status_moon_texture");
             GenerateMoonTextureForMap(map, seed);
             CallDeferred(nameof(UpdateMetadataProgressDeferred), "moon", 100f);
-            CallDeferred(nameof(UpdateProgressDeferred), 20f, "Gerando textura do Sol...");
+            CallDeferred(nameof(UpdateProgressDeferred), 20f, "@map_status_sun_texture");
             GenerateSunTextureForMap(map, seed + 577);
             CallDeferred(nameof(UpdateMetadataProgressDeferred), "sun", 100f);
             map.CelestialTextureVersion = CelestialTextureVersion;
-            CallDeferred(nameof(UpdateProgressDeferred), 40f, "Gerando rios...");
+            CallDeferred(nameof(UpdateProgressDeferred), 40f, "@map_status_generating_rivers");
             GenerateRivers(map, seed + 991);
             CallDeferred(nameof(UpdateMetadataProgressDeferred), "river", 100f);
-            CallDeferred(nameof(UpdateProgressDeferred), 75f, "Distribuindo recursos...");
+            CallDeferred(nameof(UpdateProgressDeferred), 75f, "@map_status_distributing_resources");
             GenerateResourceRegions(map, seed + 1997);
             CallDeferred(nameof(UpdateMetadataProgressDeferred), "resource", 100f);
-            CallDeferred(nameof(UpdateProgressDeferred), 100f, "Metadados concluidos!");
+            CallDeferred(nameof(UpdateProgressDeferred), 100f, "@map_status_metadata_done");
         }
 
         private void EnsureWorldMetadata(MapData map, int seed)
@@ -1007,7 +1124,7 @@ namespace Jogomania.Editor
                 if (i % 10 == 0)
                 {
                     float progress = 40f + Mathf.Min(30f, (float)i / attempts * 30f);
-                    CallDeferred(nameof(UpdateProgressDeferred), progress, $"Gerando rios ({map.Rivers.Count}/{maxRivers})...");
+                    CallDeferred(nameof(UpdateProgressDeferred), progress, $"@map_status_generating_rivers_count|{map.Rivers.Count}|{maxRivers}");
                     CallDeferred(nameof(UpdateMetadataProgressDeferred), "river", (float)i / attempts * 100f);
                 }
             }
@@ -1302,7 +1419,7 @@ namespace Jogomania.Editor
                 if (map.ResourceRegions.Count % 12 == 0)
                 {
                     float progress = 75f + Mathf.Min(20f, (float)(initialAttempts - attempts) / initialAttempts * 20f);
-                    CallDeferred(nameof(UpdateProgressDeferred), progress, $"Distribuindo recursos ({map.ResourceRegions.Count}/{target})...");
+                    CallDeferred(nameof(UpdateProgressDeferred), progress, $"@map_status_distributing_resources_count|{map.ResourceRegions.Count}|{target}");
                     CallDeferred(nameof(UpdateMetadataProgressDeferred), "resource", (float)(initialAttempts - attempts) / initialAttempts * 100f);
                 }
             }
@@ -1327,11 +1444,11 @@ namespace Jogomania.Editor
             map.Villages.Clear();
             
             // UI Update: Buscando Terras
-            CallDeferred(nameof(UpdateProgressDeferred), 0f, "Buscando terra firme...");
+            CallDeferred(nameof(UpdateProgressDeferred), 0f, "@map_status_finding_land");
             
-            CallDeferred(nameof(UpdateProgressDeferred), 10f, "Sorteando Capitais...");
+            CallDeferred(nameof(UpdateProgressDeferred), 10f, "@map_status_choosing_capitals");
 
-            CallDeferred(nameof(UpdateProgressDeferred), 20f, "Fundando ImpÃ©rios...");
+            CallDeferred(nameof(UpdateProgressDeferred), 20f, "@map_status_founding_empires");
 
             int targetCount = Mathf.Max(0, count);
             int villageIdCounter = 1;
@@ -1441,11 +1558,11 @@ namespace Jogomania.Editor
                 if (expansionLevel % 10 == 0)
                 {
                     float prog = 30f + Math.Min(65f, expansionLevel * 0.2f);
-                    CallDeferred(nameof(UpdateProgressDeferred), prog, $"Mapeando Fronteiras (NÃ­vel {expansionLevel})...");
+                    CallDeferred(nameof(UpdateProgressDeferred), prog, $"@map_status_mapping_borders|{expansionLevel}");
                 }
             }
 
-            CallDeferred(nameof(UpdateProgressDeferred), 100f, "ConcluÃ­do!");
+            CallDeferred(nameof(UpdateProgressDeferred), 100f, "@map_status_done");
             GD.Print($"Semeou {map.Villages.Count} aldeias e gerou fronteiras em {expansionLevel} iteraÃ§Ãµes.");
         }
 
@@ -1480,7 +1597,24 @@ namespace Jogomania.Editor
         private void UpdateProgressDeferred(float progress, string status)
         {
             _progressBar.Value = progress;
-            _labelStatus.Text = status;
+            _labelStatus.Text = ResolveStatusText(status);
+        }
+
+        private string ResolveStatusText(string status)
+        {
+            if (string.IsNullOrWhiteSpace(status) || !status.StartsWith("@"))
+                return status;
+
+            string[] parts = status.Substring(1).Split('|');
+            string text = Tr(parts[0]);
+            if (parts.Length > 1)
+            {
+                object[] args = new object[parts.Length - 1];
+                for (int i = 1; i < parts.Length; i++)
+                    args[i - 1] = parts[i];
+                text = string.Format(text, args);
+            }
+            return text;
         }
 
         private void UpdateMetadataProgressDeferred(string id, float progress)
@@ -1529,7 +1663,7 @@ namespace Jogomania.Editor
             if (System.IO.File.Exists(path))
             {
                 _pendingSavePath = path;
-                _overwriteDialog.DialogText = $"O mapa '{System.IO.Path.GetFileName(path)}' ja existe.\nSobrescrever ou criar uma copia numerada?";
+                _overwriteDialog.DialogText = Trf("map_dialog_exists", System.IO.Path.GetFileName(path));
                 _overwriteDialog.PopupCentered();
                 return;
             }
@@ -1554,7 +1688,7 @@ namespace Jogomania.Editor
 
         private async Task SaveMapToPath(string path)
         {
-            _saveFeedback.Text = "Salvando...";
+            _saveFeedback.Text = Tr("map_saving");
             _saveFeedback.Visible = true;
 
             await Task.Run(() => GameManager.SaveMap(path, _currentMapData));
@@ -1563,14 +1697,14 @@ namespace Jogomania.Editor
 
             RefreshSavedMapList();
             string shortPath = path.Length > 35 ? "..." + path.Substring(path.Length - 32) : path;
-            _saveFeedback.Text = $"Salvo! ({shortPath})";
+            _saveFeedback.Text = Trf("map_saved", shortPath);
         }
         private void OnBtnExportMapPressed()
         {
             if (_currentMapData == null || _currentMapData.Chunks.Count == 0) return;
 
             string dir = OS.GetSystemDir(OS.SystemDir.Desktop);
-            DisplayServer.FileDialogShow("Exportar Mapa", dir, "meu_mapa.json", false, DisplayServer.FileDialogMode.SaveFile, new string[] { "*.json ; Arquivo JSON" }, Callable.From<bool, string[], int>(OnNativeFileExportSelected));
+            DisplayServer.FileDialogShow(Tr("map_export_dialog"), dir, "meu_mapa.json", false, DisplayServer.FileDialogMode.SaveFile, new string[] { Tr("map_file_filter_json") }, Callable.From<bool, string[], int>(OnNativeFileExportSelected));
         }
 
         private async void OnNativeFileExportSelected(bool status, string[] selectedPaths, int selectedFilterIndex)
@@ -1578,7 +1712,7 @@ namespace Jogomania.Editor
             if (status && selectedPaths.Length > 0)
             {
                 string path = selectedPaths[0];
-                _saveFeedback.Text = "Exportando...";
+                _saveFeedback.Text = Tr("map_exporting");
                 _saveFeedback.Visible = true;
 
                 await System.Threading.Tasks.Task.Run(() =>
@@ -1586,7 +1720,7 @@ namespace Jogomania.Editor
                     GameManager.SaveMap(path, _currentMapData);
                 });
 
-                _saveFeedback.Text = $"âœ… Exportado para:\n{path}";
+                _saveFeedback.Text = Trf("map_exported", path);
             }
         }
 
@@ -1603,7 +1737,7 @@ namespace Jogomania.Editor
 
             _optionSavedMaps.Disabled = _optionSavedMaps.ItemCount == 0;
             if (_optionSavedMaps.ItemCount == 0)
-                _optionSavedMaps.AddItem("Nenhum mapa salvo");
+                _optionSavedMaps.AddItem(Tr("map_no_saved_maps"));
         }
 
         private async void OnBtnLoadSelectedMapPressed()
@@ -1616,7 +1750,7 @@ namespace Jogomania.Editor
         private void OnBtnLoadMapPressed()
         {
             string dir = GameManager.Instance.GetMapsDir();
-            DisplayServer.FileDialogShow("Carregar Mapa", dir, "", false, DisplayServer.FileDialogMode.OpenFile, new string[] { "*.json ; Arquivo JSON" }, Callable.From<bool, string[], int>(OnNativeFileLoadSelected));
+            DisplayServer.FileDialogShow(Tr("map_load_dialog"), dir, "", false, DisplayServer.FileDialogMode.OpenFile, new string[] { Tr("map_file_filter_json") }, Callable.From<bool, string[], int>(OnNativeFileLoadSelected));
         }
 
         private async void OnNativeFileLoadSelected(bool status, string[] selectedPaths, int selectedFilterIndex)
@@ -1632,12 +1766,12 @@ namespace Jogomania.Editor
             ClearWorld();
             _loadingPanel.Visible = true;
             _generationProgress = 0f;
-            _labelStatus.Text = "Lendo arquivo do disco...";
+            _labelStatus.Text = Tr("map_reading_disk");
 
             _currentMapData = await Task.Run(() => GameManager.LoadMap(path));
             if (_currentMapData == null)
             {
-                _saveFeedback.Text = "Erro ao carregar mapa!";
+                _saveFeedback.Text = Tr("map_load_error");
                 _saveFeedback.Visible = true;
                 _loadingPanel.Visible = false;
                 return;
@@ -1646,21 +1780,21 @@ namespace Jogomania.Editor
             if (_inputMapName != null)
                 _inputMapName.Text = System.IO.Path.GetFileNameWithoutExtension(path);
 
-            _labelStatus.Text = "Renderizando Terreno...";
+            _labelStatus.Text = Tr("map_rendering_terrain");
             _generationProgress = 65f;
             RenderCurrentMapData();
 
             await RefreshEditorGlobe();
 
             _generationProgress = 100f;
-            _saveFeedback.Text = $"{_currentMapData.Villages?.Count ?? 0} aldeias carregadas";
+            _saveFeedback.Text = Trf("map_villages_loaded", _currentMapData.Villages?.Count ?? 0);
             _saveFeedback.Visible = true;
             _loadingPanel.Visible = false;
         }
 
         private async Task RefreshEditorGlobe()
         {
-            _labelStatus.Text = "Costurando Globo...";
+            _labelStatus.Text = Tr("map_stitching_globe");
             _generationProgress = 80f;
             _globeContainer.Visible = true;
             _worldContainer.Visible = false;
@@ -1811,14 +1945,14 @@ namespace Jogomania.Editor
             string savePath = System.IO.Path.Combine(GameManager.Instance.GetPartidasDir(), "Slot_1", "save_atual.json");
             if (!System.IO.File.Exists(savePath))
             {
-                _saveFeedback.Text = "Nenhuma partida salva encontrada!";
+                _saveFeedback.Text = Tr("map_no_saved_match");
                 _saveFeedback.Visible = true;
                 return;
             }
 
             await LoadMapFromPath(savePath);
             if (_currentMapData != null)
-                _saveFeedback.Text = $"Partida carregada ({_currentMapData.Villages?.Count ?? 0} aldeias)";
+                _saveFeedback.Text = Trf("map_match_loaded", _currentMapData.Villages?.Count ?? 0);
         }
         private async void OnBtnToggle3DPressed()
         {
@@ -2048,7 +2182,7 @@ namespace Jogomania.Editor
                     else
                     {
                         _isDraggingGlobe = true;
-                        HandlePan(dragEvent.Relative);
+                        HandlePan(dragEvent.Relative * GetMobileSensitivity());
                     }
                 }
                 return;
@@ -2127,7 +2261,7 @@ namespace Jogomania.Editor
             if (!_isTacticalMode)
             {
                 // Globo 3D
-                float newZ = _camera3D.Position.Z - delta * 0.005f;
+                float newZ = _camera3D.Position.Z - delta * 0.005f * GetMobileSensitivity();
                 newZ = Mathf.Clamp(newZ, 1.02f, 5.0f);
                 _camera3D.Position = new Vector3(0, 0, newZ);
                 if (newZ <= 1.08f)
@@ -2136,7 +2270,7 @@ namespace Jogomania.Editor
             else
             {
                 // VisÃ£o TÃ¡tica 2D
-                float zoomFactor = 1.0f + delta * 0.008f;
+                float zoomFactor = 1.0f + delta * 0.008f * GetMobileSensitivity();
                 float newZoom = _tacticalView.ZoomLevel * zoomFactor;
                 if (newZoom < TacticalView.MinZoomLevel)
                     ExitTacticalMode();
@@ -2145,6 +2279,11 @@ namespace Jogomania.Editor
                     _tacticalView.ZoomLevel = TacticalView.ClampZoom(newZoom);
                 }
             }
+        }
+
+        private float GetMobileSensitivity()
+        {
+            return Mathf.Clamp(GameManager.Instance?.Settings?.MobileSensitivity ?? 1.0f, 0.1f, 3.0f);
         }
 
         private void PaintAtMouse(Vector2 mousePos)

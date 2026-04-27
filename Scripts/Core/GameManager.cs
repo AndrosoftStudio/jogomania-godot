@@ -14,6 +14,10 @@ namespace Jogomania.Core
         public string CurrentMapPath { get; set; }
         public int CurrentAICount { get; set; }
         public int CurrentAggroLevel { get; set; }
+        public UserSettings Settings { get; private set; } = new UserSettings();
+
+        private CanvasLayer _fpsLayer;
+        private Label _fpsLabel;
 
         public override void _EnterTree()
         {
@@ -41,27 +45,102 @@ namespace Jogomania.Core
 
         private void LoadUserSettings()
         {
-            var config = new ConfigFile();
-            if (config.Load("user://settings.cfg") == Godot.Error.Ok)
+            Settings = UserSettings.Load();
+            ApplyUserSettings(Settings);
+        }
+
+        public void SaveAndApplyUserSettings(UserSettings settings)
+        {
+            if (settings == null) return;
+            Settings = settings.Clone();
+            Error err = Settings.Save();
+            if (err != Error.Ok)
+                GD.PrintErr($"Falha ao salvar configurações em {UserSettings.SettingsPath}: {err}");
+
+            ApplyUserSettings(Settings);
+        }
+
+        public void ApplyUserSettings(UserSettings settings)
+        {
+            if (settings == null) return;
+
+            ApplyWindowSettings(settings);
+            DisplayServer.WindowSetVsyncMode(settings.VSync ? DisplayServer.VSyncMode.Enabled : DisplayServer.VSyncMode.Disabled);
+            GetViewport().Scaling3DScale = settings.RenderScale;
+            GetViewport().Msaa3D = (Viewport.Msaa)Mathf.Clamp(settings.AntiAliasing, 0, 3);
+
+            if (LocalizationManager.Instance != null)
+                LocalizationManager.Instance.LoadLanguage(settings.Language);
+
+            ApplyFpsOverlay(settings.ShowFps);
+        }
+
+        private void ApplyWindowSettings(UserSettings settings)
+        {
+            if (OS.GetName() == "Android" || OS.GetName() == "iOS")
+                return;
+
+            Vector2I resolution = new Vector2I(settings.ResolutionWidth, settings.ResolutionHeight);
+            if (resolution.X <= 0 || resolution.Y <= 0)
+                resolution = DisplayServer.ScreenGetSize(DisplayServer.WindowGetCurrentScreen());
+
+            DisplayServer.WindowSetFlag(DisplayServer.WindowFlags.Borderless, settings.WindowMode == VideoWindowMode.Borderless);
+
+            if (settings.WindowMode == VideoWindowMode.Fullscreen)
             {
-                bool fs = (bool)config.GetValue("Video", "Fullscreen", false);
-                DisplayServer.WindowSetMode(fs ? DisplayServer.WindowMode.Fullscreen : DisplayServer.WindowMode.Windowed);
-
-                bool vsync = (bool)config.GetValue("Video", "VSync", true);
-                DisplayServer.WindowSetVsyncMode(vsync ? DisplayServer.VSyncMode.Enabled : DisplayServer.VSyncMode.Disabled);
-
-                float scale = (float)config.GetValue("Video", "RenderScale", 1.0f);
-                GetViewport().Scaling3DScale = scale;
-
-                int aa = (int)config.GetValue("Video", "AntiAliasing", 0);
-                GetViewport().Msaa3D = (Viewport.Msaa)aa;
-
-                if (LocalizationManager.Instance != null)
-                {
-                    string lang = (string)config.GetValue("General", "Language", "pt-BR");
-                    LocalizationManager.Instance.LoadLanguage(lang);
-                }
+                DisplayServer.WindowSetSize(resolution);
+                DisplayServer.WindowSetMode(DisplayServer.WindowMode.Fullscreen);
+                return;
             }
+
+            DisplayServer.WindowSetMode(DisplayServer.WindowMode.Windowed);
+            DisplayServer.WindowSetSize(resolution);
+            CenterWindow(resolution);
+        }
+
+        private void CenterWindow(Vector2I windowSize)
+        {
+            int screen = DisplayServer.WindowGetCurrentScreen();
+            Rect2I usableRect = DisplayServer.ScreenGetUsableRect(screen);
+            Vector2I centeredPosition = usableRect.Position + (usableRect.Size - windowSize) / 2;
+            DisplayServer.WindowSetPosition(centeredPosition);
+        }
+
+        private void ApplyFpsOverlay(bool show)
+        {
+            if (!show)
+            {
+                if (_fpsLayer != null)
+                    _fpsLayer.Visible = false;
+                SetProcess(false);
+                return;
+            }
+
+            if (_fpsLayer == null)
+            {
+                _fpsLayer = new CanvasLayer { Layer = 100 };
+                _fpsLabel = new Label
+                {
+                    Text = "FPS: 0",
+                    Position = new Vector2(12, 12),
+                    MouseFilter = Control.MouseFilterEnum.Ignore
+                };
+                _fpsLabel.AddThemeColorOverride("font_color", Colors.LimeGreen);
+                _fpsLabel.AddThemeColorOverride("font_shadow_color", Colors.Black);
+                _fpsLabel.AddThemeConstantOverride("shadow_offset_x", 1);
+                _fpsLabel.AddThemeConstantOverride("shadow_offset_y", 1);
+                _fpsLayer.AddChild(_fpsLabel);
+                AddChild(_fpsLayer);
+            }
+
+            _fpsLayer.Visible = true;
+            SetProcess(true);
+        }
+
+        public override void _Process(double delta)
+        {
+            if (_fpsLabel != null && _fpsLayer != null && _fpsLayer.Visible)
+                _fpsLabel.Text = $"FPS: {Engine.GetFramesPerSecond()}";
         }
 
         public static string GodotToSysPath(string godotPath)
