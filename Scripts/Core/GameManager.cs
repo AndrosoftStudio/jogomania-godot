@@ -1,4 +1,4 @@
-﻿using Godot;
+﻿﻿using Godot;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -70,7 +70,7 @@ namespace Jogomania.Core
             if (string.IsNullOrWhiteSpace(sysPath) || !File.Exists(sysPath)) return null;
             string json = File.ReadAllText(sysPath);
             MapData map = JsonSerializer.Deserialize<MapData>(json);
-            return RehydrateMap(map);
+            return RehydrateMap(map, sysPath);
         }
 
         public static void SaveMap(string sysPath, MapData mapData)
@@ -91,28 +91,28 @@ namespace Jogomania.Core
             string dir = Path.GetDirectoryName(sysPath);
             if (!string.IsNullOrWhiteSpace(dir))
                 Directory.CreateDirectory(dir);
-            mapData.ChunksList = new List<ChunkData>(mapData.Chunks.Values);
+                
+            string dbPath = Path.Combine(dir, Path.GetFileNameWithoutExtension(sysPath) + ".db");
+            MapDatabase.SaveChunksToDb(dbPath, mapData.Chunks.Values);
+            
+            mapData.ChunksList = new List<ChunkData>(); // Limpa a lista do JSON para deixá-lo minúsculo
             string jsonString = JsonSerializer.Serialize(mapData, new JsonSerializerOptions { WriteIndented = false });
             File.WriteAllText(sysPath, jsonString);
         }
 
-        public static MapData RehydrateMap(MapData map)
+        public static MapData RehydrateMap(MapData map, string sysPath = null)
         {
             if (map == null) return null;
             map.Dimensions = new Vector2I(map.Width, map.Height);
             map.Chunks ??= new Dictionary<Vector2I, ChunkData>();
 
-            if (map.ChunksList != null && map.ChunksList.Count > 0)
+            // Se possuir o caminho, ele carrega as matrizes gigantes de terreno do Banco de Dados
+            if (!string.IsNullOrWhiteSpace(sysPath))
             {
-                map.Chunks.Clear();
-                foreach (ChunkData c in map.ChunksList)
+                string dbPath = Path.Combine(Path.GetDirectoryName(sysPath), Path.GetFileNameWithoutExtension(sysPath) + ".db");
+                if (File.Exists(dbPath))
                 {
-                    if (c == null) continue;
-                    c.ChunkPosition = new Vector2I(c.PosX, c.PosY);
-                    c.TerrainMap ??= new byte[ChunkData.CHUNK_SIZE * ChunkData.CHUNK_SIZE];
-                    c.TerritoryMap ??= new byte[ChunkData.CHUNK_SIZE * ChunkData.CHUNK_SIZE];
-                    c.EntityIds ??= new List<int>();
-                    map.Chunks[c.ChunkPosition] = c;
+                    map.Chunks = MapDatabase.LoadAllChunks(dbPath);
                 }
             }
 
@@ -120,7 +120,6 @@ namespace Jogomania.Core
             map.Villages ??= new List<VillageData>();
             map.Rivers ??= new List<RiverData>();
             map.ResourceRegions ??= new List<ResourceRegionData>();
-            map.ChunksList = new List<ChunkData>(map.Chunks.Values);
             return map;
         }
 
@@ -138,7 +137,8 @@ namespace Jogomania.Core
 
         public string GetMapPathForName(string rawName)
         {
-            return Path.Combine(GetMapsDir(), CleanMapFileName(rawName) + ".json");
+            string clean = CleanMapFileName(rawName);
+            return Path.Combine(GetMapsDir(), clean, clean + ".json");
         }
 
         public static string GetNonConflictingPath(string desiredPath)
@@ -189,7 +189,8 @@ namespace Jogomania.Core
             CurrentAICount = aiCount;
             CurrentAggroLevel = aggroLevel;
 
-            string matchDir = Path.Combine(GetPartidasDir(), "Slot_1");
+            // A pasta do save_atual precisará abrigar o .db também
+            string matchDir = Path.Combine(GetPartidasDir(), "Slot_1", "save_atual");
             EnsureDir(matchDir);
 
             string matchFile = Path.Combine(matchDir, "save_atual.json");

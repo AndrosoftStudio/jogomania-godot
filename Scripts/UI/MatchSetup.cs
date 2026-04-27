@@ -1,4 +1,4 @@
-﻿using Godot;
+﻿﻿using Godot;
 using System.IO;
 using Jogomania.Core;
 
@@ -22,7 +22,10 @@ namespace Jogomania.UI
         {
             _optionMap.Clear();
             foreach (string file in GameManager.Instance.GetSavedMapFiles())
-                _optionMap.AddItem(Path.GetFileName(file));
+            {
+                _optionMap.AddItem(Path.GetFileNameWithoutExtension(file));
+                _optionMap.SetItemMetadata(_optionMap.ItemCount - 1, file);
+            }
 
             if (_optionMap.ItemCount == 0)
             {
@@ -37,10 +40,10 @@ namespace Jogomania.UI
         private void OnBtnStartPressed()
         {
             if (_optionMap.Disabled || _optionMap.Selected < 0) return;
-            string selectedMapName = _optionMap.GetItemText(_optionMap.Selected);
-            string mapPath = Path.Combine(GameManager.Instance.GetMapsDir(), selectedMapName);
+            string mapPath = (string)_optionMap.GetItemMetadata(_optionMap.Selected);
             int aiCount = (int)_spinBoxAI.Value;
             int aggroLevel = _optionAggro.Selected;
+            string selectedMapName = _optionMap.GetItemText(_optionMap.Selected);
             GD.Print($"Iniciando Jogo: Mapa={selectedMapName}, IAs={aiCount}, Agressividade={aggroLevel}");
             GameManager.Instance?.StartSoloGame(mapPath, aiCount, aggroLevel);
         }

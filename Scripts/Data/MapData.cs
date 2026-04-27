@@ -42,6 +42,11 @@ namespace Jogomania.Data
     {
         public List<MapPointData> Points { get; set; } = new List<MapPointData>();
         public float Width { get; set; } = 1.0f;
+        public string Regime { get; set; } = "Perene";
+        public string Relief { get; set; } = "Planicie";
+        public string Destination { get; set; } = "Exorreico";
+        public string Feeding { get; set; } = "Misto";
+        public string Morphology { get; set; } = "Retilineo";
     }
 
     public class MapPointData

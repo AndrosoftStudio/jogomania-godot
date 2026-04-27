@@ -685,7 +685,7 @@ namespace Jogomania.Core
 
 		private async void InitializeMatch()
 		{
-			_currentSaveSlotPath = Path.Combine(GameManager.Instance.GetPartidasDir(), "Slot_1");
+			_currentSaveSlotPath = Path.Combine(GameManager.Instance.GetPartidasDir(), "Slot_1", "save_atual");
 			string currentMatchFile = Path.Combine(_currentSaveSlotPath, "save_atual.json");
 
 			if (!File.Exists(currentMatchFile))

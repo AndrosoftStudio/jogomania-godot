@@ -1,7 +1,8 @@
-﻿using Godot;
+﻿﻿using Godot;
 using System;
 using System.Text.Json;
 using System.IO;
+using System.IO.Compression;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -34,6 +35,7 @@ namespace Jogomania.Editor
         private ShaderMaterial _editorSunMaterial;
         private Node3D _editorSolarProminenceRoot;
         private ShaderMaterial _editorSolarProminenceMat;
+        private WorldEnvironment _sunEnvironment;
 
         private Control _loadingPanel;
         private ProgressBar _progressBar;
@@ -326,6 +328,11 @@ namespace Jogomania.Editor
             _editorSunMaterial = null;
             _editorSolarProminenceRoot?.QueueFree();
             _editorSolarProminenceRoot = null;
+            if (_sunEnvironment != null)
+            {
+                _sunEnvironment.QueueFree();
+                _sunEnvironment = null;
+            }
             _worldContainer.Visible = true;
         }
 
@@ -342,22 +349,24 @@ namespace Jogomania.Editor
             targetWidth = Mathf.CeilToInt((float)targetWidth / ChunkData.CHUNK_SIZE) * ChunkData.CHUNK_SIZE;
             targetHeight = Mathf.CeilToInt((float)targetHeight / ChunkData.CHUNK_SIZE) * ChunkData.CHUNK_SIZE;
 
-            _loadedImage.Resize(targetWidth, targetHeight, Image.Interpolation.Bilinear);
-            _loadedImage.Convert(Image.Format.Rgba8);
+            Image processImg = (Image)_loadedImage.Duplicate();
+            processImg.Convert(Image.Format.Rgba8);
 
             int width = targetWidth;
             int height = targetHeight;
             bool blackIsLand = _optionLandColor.Selected == 1;
             bool useHeightmap = _checkHeightmap.ButtonPressed;
             
-            byte[] imgData = _loadedImage.GetData();
+            byte[] imgData = processImg.GetData();
+            int imgW = processImg.GetWidth();
+            int imgH = processImg.GetHeight();
             int imageSeed = (int)GD.Randi();
 
             _loadingPanel.Visible = true;
             _generationProgress = 0f;
             _labelStatus.Text = "Mixando Biomas com Imagem...";
 
-            _currentMapData = await Task.Run(() => GenerateImageMapData(width, height, imgData, blackIsLand, useHeightmap, imageSeed));
+            _currentMapData = await Task.Run(() => GenerateImageMapData(width, height, imgData, imgW, imgH, blackIsLand, useHeightmap, imageSeed));
 
             _labelStatus.Text = "Gerando rios e recursos...";
             SetMetadataBarsVisible(true);
@@ -373,7 +382,7 @@ namespace Jogomania.Editor
             _loadingPanel.Visible = false;
         }
 
-        private MapData GenerateImageMapData(int width, int height, byte[] imgData, bool blackIsLand, bool useHeightmap, int seed)
+        private MapData GenerateImageMapData(int width, int height, byte[] imgData, int imgW, int imgH, bool blackIsLand, bool useHeightmap, int seed)
         {
             MapData map = new MapData();
             map.Dimensions = new Vector2I(width, height);
@@ -389,75 +398,100 @@ namespace Jogomania.Editor
             long totalPixels = (long)width * height;
             long processed = 0;
 
-            System.Threading.Tasks.Parallel.For(0, chunkRows, chunkY =>
+            // Prepara o caminho do arquivo temporario em ZIP
+            string tempDir = System.IO.Path.Combine(OS.GetUserDataDir(), "TempSaves");
+            if (!System.IO.Directory.Exists(tempDir)) System.IO.Directory.CreateDirectory(tempDir);
+            string tempZipPath = System.IO.Path.Combine(tempDir, "temp_imagemap_generation.zip");
+            if (System.IO.File.Exists(tempZipPath)) System.IO.File.Delete(tempZipPath);
+            
+            object zipLock = new object();
+
+            using (FileStream zipStream = new FileStream(tempZipPath, FileMode.Create))
+            using (ZipArchive archive = new ZipArchive(zipStream, ZipArchiveMode.Create))
             {
-                var noiseElev = new FastNoiseLite { NoiseType = FastNoiseLite.NoiseTypeEnum.Simplex, Seed = seed, Frequency = dynamicFreq, FractalType = FastNoiseLite.FractalTypeEnum.Fbm, FractalOctaves = 5 };
-                var noiseMoist = new FastNoiseLite { NoiseType = FastNoiseLite.NoiseTypeEnum.Simplex, Seed = seed + 100, Frequency = dynamicFreq * 1.5f, FractalType = FastNoiseLite.FractalTypeEnum.Fbm };
-                var noiseTemp = new FastNoiseLite { NoiseType = FastNoiseLite.NoiseTypeEnum.Simplex, Seed = seed + 200, Frequency = dynamicFreq * 0.8f };
-
-                for (int chunkX = 0; chunkX < chunkCols; chunkX++)
+                System.Threading.Tasks.Parallel.For(0, chunkRows, chunkY =>
                 {
-                    Vector2I chunkPos = new Vector2I(chunkX, chunkY);
-                    ChunkData chunk = new ChunkData(chunkPos);
-                    int startX = chunkX * ChunkData.CHUNK_SIZE;
-                    int startY = chunkY * ChunkData.CHUNK_SIZE;
-                    int endX = Mathf.Min(startX + ChunkData.CHUNK_SIZE, width);
-                    int endY = Mathf.Min(startY + ChunkData.CHUNK_SIZE, height);
+                    var noiseElev = new FastNoiseLite { NoiseType = FastNoiseLite.NoiseTypeEnum.Simplex, Seed = seed, Frequency = dynamicFreq, FractalType = FastNoiseLite.FractalTypeEnum.Fbm, FractalOctaves = 5 };
+                    var noiseMoist = new FastNoiseLite { NoiseType = FastNoiseLite.NoiseTypeEnum.Simplex, Seed = seed + 100, Frequency = dynamicFreq * 1.5f, FractalType = FastNoiseLite.FractalTypeEnum.Fbm };
+                    var noiseTemp = new FastNoiseLite { NoiseType = FastNoiseLite.NoiseTypeEnum.Simplex, Seed = seed + 200, Frequency = dynamicFreq * 0.8f };
 
-                    for (int y = startY; y < endY; y++)
+                    for (int chunkX = 0; chunkX < chunkCols; chunkX++)
                     {
-                        float lat = ((float)y / height) * Mathf.Pi - (Mathf.Pi / 2.0f);
-                        float baseTemp = 1.0f - (Mathf.Abs(lat) / (Mathf.Pi / 2.0f)) * 2.0f;
+                        Vector2I chunkPos = new Vector2I(chunkX, chunkY);
+                        ChunkData chunk = new ChunkData(chunkPos);
+                        int startX = chunkX * ChunkData.CHUNK_SIZE;
+                        int startY = chunkY * ChunkData.CHUNK_SIZE;
+                        int endX = Mathf.Min(startX + ChunkData.CHUNK_SIZE, width);
+                        int endY = Mathf.Min(startY + ChunkData.CHUNK_SIZE, height);
 
-                        for (int x = startX; x < endX; x++)
+                        for (int y = startY; y < endY; y++)
                         {
-                            float pVal = GetRgbaValue(imgData, x, y, width);
-                            bool isLandFromImage = blackIsLand ? pVal < 0.5f : pVal > 0.5f;
+                            float lat = ((float)y / height) * Mathf.Pi - (Mathf.Pi / 2.0f);
+                            float baseTemp = 1.0f - (Mathf.Abs(lat) / (Mathf.Pi / 2.0f)) * 2.0f;
 
-                            byte terrain;
-                            float lon = ((float)x / width) * Mathf.Pi * 2.0f;
-                            float radius = width / (Mathf.Pi * 2.0f);
-                            float nx = Mathf.Cos(lat) * Mathf.Cos(lon) * radius;
-                            float nz = Mathf.Cos(lat) * Mathf.Sin(lon) * radius;
-                            float ny = Mathf.Sin(lat) * radius;
-
-                            if (isLandFromImage)
+                            for (int x = startX; x < endX; x++)
                             {
-                                float e;
-                                if (useHeightmap)
+                                int readX = Mathf.Clamp((int)((float)x / width * imgW), 0, imgW - 1);
+                                int readY = Mathf.Clamp((int)((float)y / height * imgH), 0, imgH - 1);
+                                float pVal = GetRgbaValue(imgData, readX, readY, imgW);
+                                bool isLandFromImage = blackIsLand ? pVal < 0.5f : pVal > 0.5f;
+
+                                byte terrain;
+                                float lon = ((float)x / width) * Mathf.Pi * 2.0f;
+                                float radius = width / (Mathf.Pi * 2.0f);
+                                float nx = Mathf.Cos(lat) * Mathf.Cos(lon) * radius;
+                                float nz = Mathf.Cos(lat) * Mathf.Sin(lon) * radius;
+                                float ny = Mathf.Sin(lat) * radius;
+
+                                if (isLandFromImage)
                                 {
-                                    float rawH = blackIsLand ? (1.0f - pVal) : pVal;
-                                    e = (rawH - 0.5f) * 2.0f;
+                                    float e;
+                                    if (useHeightmap)
+                                    {
+                                        float rawH = blackIsLand ? (1.0f - pVal) : pVal;
+                                        e = (rawH - 0.5f) * 2.0f;
+                                    }
+                                    else
+                                    {
+                                        e = noiseElev.GetNoise3D(nx, ny, nz);
+                                        if (e < 0.05f) e = 0.05f;
+                                    }
+
+                                    float m = noiseMoist.GetNoise3D(nx, ny, nz);
+                                    float tNoise = noiseTemp.GetNoise3D(nx, ny, nz);
+                                    float t = baseTemp + (tNoise * 0.5f);
+                                    terrain = GetBiome(e, m, t);
                                 }
                                 else
                                 {
-                                    e = noiseElev.GetNoise3D(nx, ny, nz);
-                                    if (e < 0.05f) e = 0.05f;
+                                    float e = noiseElev.GetNoise3D(nx, ny, nz);
+                                    terrain = e < -0.3f ? (byte)TerrainType.DeepOcean : (byte)TerrainType.ShallowWater;
                                 }
 
-                                float m = noiseMoist.GetNoise3D(nx, ny, nz);
-                                float tNoise = noiseTemp.GetNoise3D(nx, ny, nz);
-                                float t = baseTemp + (tNoise * 0.5f);
-                                terrain = GetBiome(e, m, t);
+                                int localX = x - startX;
+                                int localY = y - startY;
+                                chunk.TerrainMap[localY * ChunkData.CHUNK_SIZE + localX] = terrain;
                             }
-                            else
-                            {
-                                float e = noiseElev.GetNoise3D(nx, ny, nz);
-                                terrain = e < -0.3f ? (byte)TerrainType.DeepOcean : (byte)TerrainType.ShallowWater;
-                            }
-
-                            int localX = x - startX;
-                            int localY = y - startY;
-                            chunk.TerrainMap[localY * ChunkData.CHUNK_SIZE + localX] = terrain;
                         }
-                    }
 
-                    chunks[chunkY * chunkCols + chunkX] = chunk;
-                    long chunkPixels = (long)(endX - startX) * (endY - startY);
-                    long done = Interlocked.Add(ref processed, chunkPixels);
-                    _generationProgress = ((float)done / totalPixels) * 100f;
-                }
-            });
+                        chunks[chunkY * chunkCols + chunkX] = chunk;
+                        
+                        // Salva o Chunk progressivamente no arquivo ZIP
+                        lock (zipLock)
+                        {
+                            ZipArchiveEntry entry = archive.CreateEntry($"chunk_{chunkPos.X}_{chunkPos.Y}.json", CompressionLevel.Fastest);
+                            using (StreamWriter writer = new StreamWriter(entry.Open()))
+                            {
+                                writer.Write(JsonSerializer.Serialize(chunk));
+                            }
+                        }
+
+                        long chunkPixels = (long)(endX - startX) * (endY - startY);
+                        long done = Interlocked.Add(ref processed, chunkPixels);
+                        _generationProgress = ((float)done / totalPixels) * 100f;
+                    }
+                });
+            }
 
             for (int i = 0; i < chunks.Length; i++)
                 map.Chunks[chunks[i].ChunkPosition] = chunks[i];
@@ -526,52 +560,75 @@ namespace Jogomania.Editor
             long totalPixels = (long)targetWidth * targetHeight;
             long processed = 0;
 
-            System.Threading.Tasks.Parallel.For(0, chunkRows, chunkY =>
+            // Prepara o caminho do arquivo temporario em ZIP
+            string tempDir = System.IO.Path.Combine(OS.GetUserDataDir(), "TempSaves");
+            if (!System.IO.Directory.Exists(tempDir)) System.IO.Directory.CreateDirectory(tempDir);
+            string tempZipPath = System.IO.Path.Combine(tempDir, "temp_noisemap_generation.zip");
+            if (System.IO.File.Exists(tempZipPath)) System.IO.File.Delete(tempZipPath);
+            
+            object zipLock = new object();
+
+            using (FileStream zipStream = new FileStream(tempZipPath, FileMode.Create))
+            using (ZipArchive archive = new ZipArchive(zipStream, ZipArchiveMode.Create))
             {
-                var noiseElev = new FastNoiseLite { NoiseType = FastNoiseLite.NoiseTypeEnum.Simplex, Seed = seed, Frequency = dynamicFreq, FractalType = FastNoiseLite.FractalTypeEnum.Fbm, FractalOctaves = 5 };
-                var noiseMoist = new FastNoiseLite { NoiseType = FastNoiseLite.NoiseTypeEnum.Simplex, Seed = seed + 100, Frequency = dynamicFreq * 1.5f, FractalType = FastNoiseLite.FractalTypeEnum.Fbm };
-                var noiseTemp = new FastNoiseLite { NoiseType = FastNoiseLite.NoiseTypeEnum.Simplex, Seed = seed + 200, Frequency = dynamicFreq * 0.8f };
-
-                for (int chunkX = 0; chunkX < chunkCols; chunkX++)
+                System.Threading.Tasks.Parallel.For(0, chunkRows, chunkY =>
                 {
-                    Vector2I chunkPos = new Vector2I(chunkX, chunkY);
-                    ChunkData chunk = new ChunkData(chunkPos);
-                    int startX = chunkX * ChunkData.CHUNK_SIZE;
-                    int startY = chunkY * ChunkData.CHUNK_SIZE;
-                    int endX = Mathf.Min(startX + ChunkData.CHUNK_SIZE, targetWidth);
-                    int endY = Mathf.Min(startY + ChunkData.CHUNK_SIZE, targetHeight);
+                    var noiseElev = new FastNoiseLite { NoiseType = FastNoiseLite.NoiseTypeEnum.Simplex, Seed = seed, Frequency = dynamicFreq, FractalType = FastNoiseLite.FractalTypeEnum.Fbm, FractalOctaves = 5 };
+                    var noiseMoist = new FastNoiseLite { NoiseType = FastNoiseLite.NoiseTypeEnum.Simplex, Seed = seed + 100, Frequency = dynamicFreq * 1.5f, FractalType = FastNoiseLite.FractalTypeEnum.Fbm };
+                    var noiseTemp = new FastNoiseLite { NoiseType = FastNoiseLite.NoiseTypeEnum.Simplex, Seed = seed + 200, Frequency = dynamicFreq * 0.8f };
 
-                    for (int y = startY; y < endY; y++)
+                    for (int chunkX = 0; chunkX < chunkCols; chunkX++)
                     {
-                        float lat = ((float)y / targetHeight) * Mathf.Pi - (Mathf.Pi / 2.0f);
-                        float baseTemp = 1.0f - (Mathf.Abs(lat) / (Mathf.Pi / 2.0f)) * 2.0f;
+                        Vector2I chunkPos = new Vector2I(chunkX, chunkY);
+                        ChunkData chunk = new ChunkData(chunkPos);
+                        int startX = chunkX * ChunkData.CHUNK_SIZE;
+                        int startY = chunkY * ChunkData.CHUNK_SIZE;
+                        int endX = Mathf.Min(startX + ChunkData.CHUNK_SIZE, targetWidth);
+                        int endY = Mathf.Min(startY + ChunkData.CHUNK_SIZE, targetHeight);
 
-                        for (int x = startX; x < endX; x++)
+                        for (int y = startY; y < endY; y++)
                         {
-                            float lon = ((float)x / targetWidth) * Mathf.Pi * 2.0f;
-                            float radius = targetWidth / (Mathf.Pi * 2.0f);
-                            float nx = Mathf.Cos(lat) * Mathf.Cos(lon) * radius;
-                            float nz = Mathf.Cos(lat) * Mathf.Sin(lon) * radius;
-                            float ny = Mathf.Sin(lat) * radius;
+                            float lat = ((float)y / targetHeight) * Mathf.Pi - (Mathf.Pi / 2.0f);
+                            float baseTemp = 1.0f - (Mathf.Abs(lat) / (Mathf.Pi / 2.0f)) * 2.0f;
 
-                            float e = noiseElev.GetNoise3D(nx, ny, nz);
-                            float m = noiseMoist.GetNoise3D(nx, ny, nz);
-                            float tNoise = noiseTemp.GetNoise3D(nx, ny, nz);
-                            float t = baseTemp + (tNoise * 0.5f);
+                            for (int x = startX; x < endX; x++)
+                            {
+                                float lon = ((float)x / targetWidth) * Mathf.Pi * 2.0f;
+                                float radius = targetWidth / (Mathf.Pi * 2.0f);
+                                float nx = Mathf.Cos(lat) * Mathf.Cos(lon) * radius;
+                                float nz = Mathf.Cos(lat) * Mathf.Sin(lon) * radius;
+                                float ny = Mathf.Sin(lat) * radius;
 
-                            byte terrain = GetBiome(e, m, t);
-                            int localX = x - startX;
-                            int localY = y - startY;
-                            chunk.TerrainMap[localY * ChunkData.CHUNK_SIZE + localX] = terrain;
+                                float e = noiseElev.GetNoise3D(nx, ny, nz);
+                                float m = noiseMoist.GetNoise3D(nx, ny, nz);
+                                float tNoise = noiseTemp.GetNoise3D(nx, ny, nz);
+                                float t = baseTemp + (tNoise * 0.5f);
+
+                                byte terrain = GetBiome(e, m, t);
+                                int localX = x - startX;
+                                int localY = y - startY;
+                                chunk.TerrainMap[localY * ChunkData.CHUNK_SIZE + localX] = terrain;
+                            }
                         }
-                    }
 
-                    chunks[chunkY * chunkCols + chunkX] = chunk;
-                    long chunkPixels = (long)(endX - startX) * (endY - startY);
-                    long done = Interlocked.Add(ref processed, chunkPixels);
-                    _generationProgress = ((float)done / totalPixels) * 100f;
-                }
-            });
+                        chunks[chunkY * chunkCols + chunkX] = chunk;
+                        
+                        // Salva o Chunk progressivamente no arquivo ZIP
+                        lock (zipLock)
+                        {
+                            ZipArchiveEntry entry = archive.CreateEntry($"chunk_{chunkPos.X}_{chunkPos.Y}.json", CompressionLevel.Fastest);
+                            using (StreamWriter writer = new StreamWriter(entry.Open()))
+                            {
+                                writer.Write(JsonSerializer.Serialize(chunk));
+                            }
+                        }
+
+                        long chunkPixels = (long)(endX - startX) * (endY - startY);
+                        long done = Interlocked.Add(ref processed, chunkPixels);
+                        _generationProgress = ((float)done / totalPixels) * 100f;
+                    }
+                });
+            }
 
             for (int i = 0; i < chunks.Length; i++)
                 map.Chunks[chunks[i].ChunkPosition] = chunks[i];
@@ -645,22 +702,24 @@ namespace Jogomania.Editor
 
         private void GenerateMoonTextureForMap(MapData map, int seed)
         {
-            int width = Mathf.Max(64, map.Width);
-            int height = Mathf.Max(32, map.Height);
-            Image img = Image.CreateEmpty(width, height, false, Image.Format.Rgba8);
+            int width = Mathf.Clamp(map.Width, 64, 2048);
+            int height = Mathf.Clamp(map.Height, 32, 1024);
+            byte[] moonData = new byte[width * height * 4];
             var rng = new RandomNumberGenerator { Seed = (ulong)(uint)seed };
             var maria = CreateMoonMaria(seed);
             var rayCenters = CreateMoonRayCenters(seed + 71);
 
-            for (int y = 0; y < img.GetHeight(); y++)
+            int processedRows = 0;
+            System.Threading.Tasks.Parallel.For(0, height, y =>
             {
-                for (int x = 0; x < img.GetWidth(); x++)
+                for (int x = 0; x < width; x++)
                 {
                     float u = (float)x / width;
                     float v = (float)y / height;
-                    float large = Fbm(u * 5.0f + seed * 0.001f, v * 2.7f - seed * 0.0007f, 5);
-                    float fine = Fbm(u * 55.0f + 13.1f, v * 28.0f + 3.7f, 4);
-                    float shade = 0.48f + large * 0.16f + fine * 0.08f;
+                    float large = Fbm(u * 8.0f + seed * 0.001f, v * 4.0f - seed * 0.0007f, 6);
+                    float medium = Fbm(u * 24.0f, v * 12.0f, 5);
+                    float fine = Fbm(u * 80.0f + 13.1f, v * 40.0f + 3.7f, 4);
+                    float shade = 0.40f + large * 0.25f + medium * 0.10f + fine * 0.05f;
 
                     foreach (MoonPatch patch in maria)
                     {
@@ -683,11 +742,17 @@ namespace Jogomania.Editor
                     }
 
                     shade = Mathf.Clamp(shade, 0.10f, 0.86f);
-                    img.SetPixel(x, y, new Color(shade, shade, shade * 0.97f, 1f));
+                    
+                    int idx = (y * width + x) * 4;
+                    moonData[idx] = (byte)(shade * 255f);
+                    moonData[idx + 1] = (byte)(shade * 255f);
+                    moonData[idx + 2] = (byte)(shade * 0.97f * 255f);
+                    moonData[idx + 3] = 255;
                 }
-                if (y % 32 == 0)
-                    CallDeferred(nameof(UpdateMetadataProgressDeferred), "moon", Mathf.Min(45f, (float)y / height * 45f));
-            }
+                int done = Interlocked.Increment(ref processedRows);
+                if (done % 32 == 0)
+                    CallDeferred(nameof(UpdateMetadataProgressDeferred), "moon", Mathf.Min(45f, (float)done / height * 45f));
+            });
 
             int craterCount = Mathf.Clamp(width * height / 2400, 90, 720);
             for (int i = 0; i < craterCount; i++)
@@ -700,22 +765,27 @@ namespace Jogomania.Editor
                     {
                         float d = center.DistanceTo(new Vector2(x, y)) / radius;
                         if (d > 1f) continue;
-                        Color baseColor = img.GetPixel(x, y);
-                        float bowl = Mathf.Lerp(0.78f, 1.02f, Mathf.SmoothStep(0.10f, 0.78f, d));
-                        float rim = Mathf.SmoothStep(0.72f, 0.90f, d) * (1.0f - Mathf.SmoothStep(0.90f, 1.0f, d));
-                        float shadow = Mathf.Clamp((new Vector2(x, y) - center).Normalized().Dot(new Vector2(-0.65f, 0.45f)), -1f, 1f) * (1f - d) * 0.06f;
-                        float crater = bowl + rim * 0.16f + shadow;
-                        float shade = Mathf.Clamp(baseColor.R * crater, 0.08f, 0.92f);
-                        img.SetPixel(x, y, new Color(shade, shade, shade * 0.97f, 1f));
+                        
+                        int idx = (y * width + x) * 4;
+                        float baseR = moonData[idx] / 255f;
+                        float bowl = Mathf.Lerp(0.60f, 1.05f, Mathf.SmoothStep(0.00f, 0.80f, d));
+                        float rim = Mathf.SmoothStep(0.65f, 0.85f, d) * (1.0f - Mathf.SmoothStep(0.85f, 1.0f, d));
+                        float shadow = Mathf.Clamp((new Vector2(x, y) - center).Normalized().Dot(new Vector2(-0.70f, 0.70f)), -1f, 1f) * (1f - d) * 0.20f;
+                        float crater = bowl + rim * 0.40f + shadow;
+                        float shade = Mathf.Clamp(baseR * crater, 0.05f, 0.95f);
+                        
+                        moonData[idx] = (byte)(shade * 255f);
+                        moonData[idx + 1] = (byte)(shade * 255f);
+                        moonData[idx + 2] = (byte)(shade * 0.97f * 255f);
                     }
                 }
                 if (i % 12 == 0)
                     CallDeferred(nameof(UpdateMetadataProgressDeferred), "moon", 45f + (float)i / craterCount * 55f);
             }
 
-            map.MoonTextureWidth = img.GetWidth();
-            map.MoonTextureHeight = img.GetHeight();
-            map.MoonTextureData = img.GetData();
+            map.MoonTextureWidth = width;
+            map.MoonTextureHeight = height;
+            map.MoonTextureData = moonData;
         }
 
         private struct MoonPatch
@@ -843,11 +913,12 @@ namespace Jogomania.Editor
 
         private void GenerateSunTextureForMap(MapData map, int seed)
         {
-            int width = Mathf.Max(64, map.Width);
-            int height = Mathf.Max(32, map.Height);
-            Image img = Image.CreateEmpty(width, height, false, Image.Format.Rgba8);
+            int width = Mathf.Clamp(map.Width, 64, 2048);
+            int height = Mathf.Clamp(map.Height, 32, 1024);
+            byte[] sunData = new byte[width * height * 4];
+            int processedRows = 0;
 
-            for (int y = 0; y < height; y++)
+            System.Threading.Tasks.Parallel.For(0, height, y =>
             {
                 for (int x = 0; x < width; x++)
                 {
@@ -867,21 +938,24 @@ namespace Jogomania.Editor
                     float heat = Mathf.Clamp(0.42f + granules * 0.24f + mottling * 0.25f + active * 0.22f, 0f, 1f);
                     float flare = Mathf.SmoothStep(0.74f, 0.94f, active + granules * 0.22f);
 
-                    Color color = new Color(
-                        1.0f,
-                        0.29f + heat * 0.48f + flare * 0.12f,
-                        0.035f + heat * 0.12f + flare * 0.07f,
-                        1f
-                    );
-                    img.SetPixel(x, y, color);
+                    float r = 1.5f + flare * 0.5f;
+                    float g = 0.40f + heat * 0.80f + flare * 0.30f;
+                    float b = 0.05f + heat * 0.20f + flare * 0.10f;
+                    
+                    int idx = (y * width + x) * 4;
+                    sunData[idx] = (byte)Mathf.Clamp(r * 255f, 0, 255);
+                    sunData[idx + 1] = (byte)Mathf.Clamp(g * 255f, 0, 255);
+                    sunData[idx + 2] = (byte)Mathf.Clamp(b * 255f, 0, 255);
+                    sunData[idx + 3] = 255;
                 }
-                if (y % 32 == 0)
-                    CallDeferred(nameof(UpdateMetadataProgressDeferred), "sun", (float)y / height * 100f);
-            }
+                int done = Interlocked.Increment(ref processedRows);
+                if (done % 32 == 0)
+                    CallDeferred(nameof(UpdateMetadataProgressDeferred), "sun", (float)done / height * 100f);
+            });
 
-            map.SunTextureWidth = img.GetWidth();
-            map.SunTextureHeight = img.GetHeight();
-            map.SunTextureData = img.GetData();
+            map.SunTextureWidth = width;
+            map.SunTextureHeight = height;
+            map.SunTextureData = sunData;
         }
 
         private void GenerateRivers(MapData map, int seed)
@@ -904,9 +978,10 @@ namespace Jogomania.Editor
                         int mapY = baseY + y;
                         if (mapX >= map.Width || mapY >= map.Height) continue;
                         byte terrain = chunk.TerrainMap[y * ChunkData.CHUNK_SIZE + x];
-                        if ((terrain == (byte)TerrainType.Mountain || terrain == (byte)TerrainType.HighPeak || terrain == (byte)TerrainType.Snow) && rng.Randf() < 0.035f)
+                        
+                        if ((terrain == 10 || terrain == 11 || terrain == 4) && rng.Randf() < 0.035f)
                             starts.Add(new Vector2I(mapX, mapY));
-                        else if (terrain >= (byte)TerrainType.Grassland && !PlanetMeshBuilder.IsOcean(terrain) && rng.Randf() < 0.006f)
+                        else if (terrain >= 3 && terrain < 10 && rng.Randf() < 0.006f) // 3 a 9 são biomas seguros de terra firme
                             fallbackStarts.Add(new Vector2I(mapX, mapY));
                     }
                 }
@@ -915,7 +990,7 @@ namespace Jogomania.Editor
             if (starts.Count < 8)
                 starts.AddRange(fallbackStarts);
 
-            int maxRivers = Mathf.Clamp(map.Width * map.Height / (220 * 220), 6, 42);
+            int maxRivers = Mathf.Clamp(map.Width * map.Height / (100 * 100), 15, 150);
             int attempts = Mathf.Max(starts.Count, maxRivers * 18);
             for (int i = 0; i < attempts && map.Rivers.Count < maxRivers; i++)
             {
@@ -923,7 +998,7 @@ namespace Jogomania.Editor
                     ? starts[(int)(rng.Randi() % (uint)starts.Count)]
                     : new Vector2I(rng.RandiRange(0, map.Width - 1), rng.RandiRange(0, map.Height - 1));
                 RiverData river = TraceRiver(map, start, rng);
-                if (river.Points.Count >= 8)
+                if (river.Points.Count >= 4) // Diminuido para não rejeitar rios menores
                 {
                     map.Rivers.Add(river);
                     CarveRiverTerrain(map, river);
@@ -941,20 +1016,73 @@ namespace Jogomania.Editor
         private RiverData TraceRiver(MapData map, Vector2I start, RandomNumberGenerator rng)
         {
             var river = new RiverData { Width = rng.RandfRange(0.8f, 1.8f) };
+            
+            // --- CLASSIFICACAO HIDROLOGICA PROCEDURAL ---
+            byte startTerrain = GetSafeTerrainAt(map, start.X, start.Y);
+            
+            if (startTerrain == 10 || startTerrain == 11) {
+                river.Feeding = rng.Randf() < 0.7f ? "Nival" : "Glacial";
+                river.Relief = "Planalto";
+            } else if (startTerrain == 4 || startTerrain == 5) {
+                river.Feeding = "Pluvial";
+                river.Relief = "Planicie";
+            } else {
+                river.Feeding = "Misto";
+                river.Relief = rng.Randf() < 0.5f ? "Planicie" : "Planalto";
+            }
+
+            float randRegime = rng.Randf();
+            if (startTerrain == 7) river.Regime = "Efemero";
+            else if (startTerrain == 6 || startTerrain == 8) river.Regime = randRegime < 0.6f ? "Intermitente" : "Perene";
+            else river.Regime = randRegime < 0.8f ? "Perene" : "Intermitente";
+
+            float randDest = rng.Randf();
+            if (river.Regime == "Efemero" || startTerrain == 7) river.Destination = randDest < 0.7f ? "Arreico" : "Endorreico";
+            else if (randDest < 0.10f) river.Destination = "Endorreico";
+            else if (randDest < 0.15f && river.Relief == "Planalto") river.Destination = "Criptorreico";
+            else river.Destination = "Exorreico";
+
+            float randMorph = rng.Randf();
+            if (river.Relief == "Planalto") {
+                river.Morphology = randMorph < 0.6f ? "Retilineo" : "Entrelacado";
+            } else {
+                if (randMorph < 0.5f) river.Morphology = "Meandrico";
+                else if (randMorph < 0.8f) river.Morphology = "Anastomosado";
+                else river.Morphology = "Retilineo";
+            }
+            // --- FIM DA CLASSIFICACAO ---
+
             var visited = new HashSet<Vector2I>();
             Vector2I current = start;
             int targetY = map.Height / 2;
+            Vector2I momentum = Vector2I.Zero;
 
-            for (int step = 0; step < 420; step++)
+            int lengthCap = rng.RandiRange(100, 420);
+            if (river.Destination == "Arreico" || river.Destination == "Criptorreico") lengthCap = rng.RandiRange(15, 60);
+            if (river.Destination == "Endorreico") lengthCap = rng.RandiRange(30, 120);
+            if (river.Morphology == "Entrelacado" || river.Morphology == "Anastomosado") river.Width *= rng.RandfRange(1.3f, 2.0f);
+
+            float meanderAngle = rng.RandfRange(0, Mathf.Tau);
+
+            for (int step = 0; step < lengthCap; step++)
             {
                 if (!visited.Add(current)) break;
-            river.Points.Add(new MapPointData { X = current.X, Y = current.Y });
+                river.Points.Add(new MapPointData { X = current.X, Y = current.Y });
 
-                byte terrain = PlanetMeshBuilder.GetTerrainAt(map, current.X, current.Y);
-            if (PlanetMeshBuilder.IsOcean(terrain)) break;
+                byte terrain = GetSafeTerrainAt(map, current.X, current.Y);
+                
+                if (river.Destination == "Arreico" && terrain == 7 && step > lengthCap * 0.5f) break;
+                if (river.Destination == "Criptorreico" && (terrain == 10 || terrain == 11) && step > 10) break;
+                
+                if (terrain == 0 || terrain == 1) {
+                    river.Destination = "Exorreico"; 
+                    break;
+                }
 
                 Vector2I best = current;
                 float bestScore = float.MaxValue;
+                Vector2I nextMomentum = momentum;
+                
                 for (int oy = -1; oy <= 1; oy++)
                 {
                     for (int ox = -1; ox <= 1; ox++)
@@ -962,35 +1090,105 @@ namespace Jogomania.Editor
                         if (ox == 0 && oy == 0) continue;
                         int nx = WrapMapX(current.X + ox, map.Width);
                         int ny = WrapMapY(current.Y + oy, map.Height);
-                        byte nt = PlanetMeshBuilder.GetTerrainAt(map, nx, ny);
-                        float height = PlanetMeshBuilder.GetTerrainHeight(nt);
+                        byte nt = GetSafeTerrainAt(map, nx, ny);
+                        
+                        float height = GetSafeTerrainHeight(nt);
                         float equatorPull = Mathf.Abs(ny - targetY) * 0.00008f;
-                        float jitter = rng.Randf() * 0.006f;
-                        float waterBonus = PlanetMeshBuilder.IsOcean(nt) ? -0.08f : 0f;
-                        float score = height + equatorPull + jitter + waterBonus;
+                        
+                        float jitterAmount = river.Morphology == "Meandrico" ? 0.035f : 0.006f;
+                        if (river.Morphology == "Anastomosado") jitterAmount = 0.02f;
+                        float jitter = rng.Randf() * jitterAmount;
+                        
+                        float meanderBonus = 0f;
+                        if (river.Morphology == "Meandrico" || river.Morphology == "Anastomosado") {
+                            Vector2 dir = new Vector2(ox, oy).Normalized();
+                            float expectedDx = Mathf.Cos(meanderAngle);
+                            float expectedDy = Mathf.Sin(meanderAngle);
+                            meanderBonus = -dir.Dot(new Vector2(expectedDx, expectedDy)) * 0.04f;
+                        }
+
+                        float waterBonus = (nt == 0 || nt == 1) ? -2.0f : 0f;
+                        float momentumStrength = river.Morphology == "Retilineo" ? -0.15f : -0.02f;
+                        float momentumBonus = (ox == momentum.X && oy == momentum.Y) ? momentumStrength : 0f; 
+                        
+                        float score = height + equatorPull + jitter + meanderBonus + waterBonus + momentumBonus;
                         if (score < bestScore)
                         {
                             bestScore = score;
                             best = new Vector2I(nx, ny);
+                            nextMomentum = new Vector2I(ox, oy);
                         }
                     }
                 }
 
                 if (best == current) break;
                 current = best;
+                momentum = nextMomentum;
+
+                if (river.Morphology == "Meandrico" || river.Morphology == "Anastomosado")
+                {
+                    meanderAngle += rng.RandfRange(-0.4f, 0.4f);
+                }
             }
 
             return river;
         }
 
+        private byte GetSafeTerrainAt(MapData map, int x, int y)
+        {
+            x = WrapMapX(x, map.Width);
+            y = WrapMapY(y, map.Height);
+            int cx = x / ChunkData.CHUNK_SIZE;
+            int cy = y / ChunkData.CHUNK_SIZE;
+            if (map.Chunks.TryGetValue(new Vector2I(cx, cy), out ChunkData chunk))
+            {
+                return chunk.TerrainMap[(y % ChunkData.CHUNK_SIZE) * ChunkData.CHUNK_SIZE + (x % ChunkData.CHUNK_SIZE)];
+            }
+            return 0; // Default para Oceano Profundo
+        }
+
+        private float GetSafeTerrainHeight(byte type)
+        {
+            switch (type)
+            {
+                case 0: return -0.5f; // DeepOcean
+                case 1: return -0.2f; // ShallowWater
+                case 2: return 0.1f;  // Beach
+                case 10: return 0.8f; // Mountain
+                case 11: return 1.0f; // HighPeak
+                default: return 0.4f; // terra
+            }
+        }
+
         private void CarveRiverTerrain(MapData map, RiverData river)
         {
-            foreach (MapPointData point in river.Points)
+            var rng = new RandomNumberGenerator();
+            rng.Randomize();
+
+            for (int i = 0; i < river.Points.Count; i++)
             {
-                for (int oy = -1; oy <= 1; oy++)
+                MapPointData point = river.Points[i];
+                int w = river.Width > 1.4f ? 1 : 0;
+                if (river.Morphology == "Anastomosado" || river.Morphology == "Entrelacado")
                 {
-                    for (int ox = -1; ox <= 1; ox++)
+                    if (river.Width > 1.8f) w = 2;
+                }
+
+                for (int oy = -w; oy <= w; oy++)
+                {
+                    for (int ox = -w; ox <= w; ox++)
                     {
+                        if (w == 1 && Math.Abs(ox) == 1 && Math.Abs(oy) == 1) continue;
+                        if (w == 2 && Math.Abs(ox) + Math.Abs(oy) >= 3) continue;
+                        
+                        // Cria ilhotas no meio de rios entrelaçados
+                        if ((river.Morphology == "Entrelacado" || river.Morphology == "Anastomosado") && w >= 1 && rng.Randf() < 0.35f) 
+                            continue;
+                            
+                        // Rios efêmeros ou intermitentes as vezes secam em trechos
+                        if ((river.Regime == "Efemero" || river.Regime == "Intermitente") && rng.Randf() < 0.15f)
+                            continue;
+
                         int x = WrapMapX(point.X + ox, map.Width);
                         int y = WrapMapY(point.Y + oy, map.Height);
                         int cx = x / ChunkData.CHUNK_SIZE;
@@ -1001,9 +1199,40 @@ namespace Jogomania.Editor
                         int localY = y % ChunkData.CHUNK_SIZE;
                         int index = localY * ChunkData.CHUNK_SIZE + localX;
                         byte terrain = chunk.TerrainMap[index];
-                        if (!PlanetMeshBuilder.IsOcean(terrain) && terrain != (byte)TerrainType.HighPeak)
-                            chunk.TerrainMap[index] = (byte)TerrainType.ShallowWater;
+                        if (terrain >= 2 && terrain != 11) 
+                            chunk.TerrainMap[index] = 1; 
                     }
+                }
+            }
+
+            // Geração do lago endorreico no final do rio caso ele não chegue no mar
+            if (river.Destination == "Endorreico" && river.Points.Count > 0)
+            {
+                MapPointData endPoint = river.Points[river.Points.Count - 1];
+                CarveLake(map, endPoint.X, endPoint.Y, rng.RandiRange(2, 5));
+            }
+        }
+
+        private void CarveLake(MapData map, int centerX, int centerY, int radius)
+        {
+            for (int oy = -radius; oy <= radius; oy++)
+            {
+                for (int ox = -radius; ox <= radius; ox++)
+                {
+                    if (ox * ox + oy * oy > radius * radius) continue; // Formato Circular
+
+                    int x = WrapMapX(centerX + ox, map.Width);
+                    int y = WrapMapY(centerY + oy, map.Height);
+                    int cx = x / ChunkData.CHUNK_SIZE;
+                    int cy = y / ChunkData.CHUNK_SIZE;
+                    if (!map.Chunks.TryGetValue(new Vector2I(cx, cy), out ChunkData chunk)) continue;
+
+                    int localX = x % ChunkData.CHUNK_SIZE;
+                    int localY = y % ChunkData.CHUNK_SIZE;
+                    int index = localY * ChunkData.CHUNK_SIZE + localX;
+                    byte terrain = chunk.TerrainMap[index];
+                    if (terrain >= 2 && terrain != 11) // Se for terra firme
+                        chunk.TerrainMap[index] = 1; // ShallowWater (Lago)
                 }
             }
         }
@@ -1023,8 +1252,8 @@ namespace Jogomania.Editor
             {
                 int x = rng.RandiRange(0, map.Width - 1);
                 int y = rng.RandiRange(0, map.Height - 1);
-                byte terrain = PlanetMeshBuilder.GetTerrainAt(map, x, y);
-                bool ocean = PlanetMeshBuilder.IsOcean(terrain);
+                byte terrain = GetSafeTerrainAt(map, x, y);
+                bool ocean = terrain == 0 || terrain == 1; // Garante sem bugs externos de verificação
 
                 string id;
                 string category;
@@ -1114,7 +1343,7 @@ namespace Jogomania.Editor
             {
                 Vector2I pos = new Vector2I(rng.Next(0, map.Width), rng.Next(0, map.Height));
                 if (occupied.Contains(pos)) continue;
-                if (!IsHabitableTerrain(PlanetMeshBuilder.GetTerrainAt(map, pos.X, pos.Y))) continue;
+                if (!IsHabitableTerrain(GetSafeTerrainAt(map, pos.X, pos.Y))) continue;
                 PlaceVillage(map, pos, villageIdCounter++, occupied);
             }
 
@@ -1368,7 +1597,8 @@ namespace Jogomania.Editor
 
             foreach (string file in GameManager.Instance.GetSavedMapFiles())
             {
-                _optionSavedMaps.AddItem(System.IO.Path.GetFileName(file));
+                _optionSavedMaps.AddItem(System.IO.Path.GetFileNameWithoutExtension(file));
+                _optionSavedMaps.SetItemMetadata(_optionSavedMaps.ItemCount - 1, file);
             }
 
             _optionSavedMaps.Disabled = _optionSavedMaps.ItemCount == 0;
@@ -1379,8 +1609,7 @@ namespace Jogomania.Editor
         private async void OnBtnLoadSelectedMapPressed()
         {
             if (_optionSavedMaps == null || _optionSavedMaps.Disabled || _optionSavedMaps.Selected < 0) return;
-            string fileName = _optionSavedMaps.GetItemText(_optionSavedMaps.Selected);
-            string path = System.IO.Path.Combine(GameManager.Instance.GetMapsDir(), fileName);
+            string path = (string)_optionSavedMaps.GetItemMetadata(_optionSavedMaps.Selected);
             await LoadMapFromPath(path);
         }
 
@@ -1453,10 +1682,30 @@ namespace Jogomania.Editor
                 if (_editorSolarProminenceRoot == null)
                     CreateEditorSolarProminences();
                 _editorSolarProminenceRoot.Visible = true;
+
+                if (_sunEnvironment == null)
+                {
+                    _sunEnvironment = new WorldEnvironment();
+                    var env = new Godot.Environment();
+                    env.BackgroundMode = Godot.Environment.BGMode.ClearColor;
+                    env.GlowEnabled = true;
+                    env.GlowIntensity = 2.8f;
+                    env.GlowStrength = 1.4f;
+                    env.GlowBlendMode = Godot.Environment.GlowBlendModeEnum.Additive;
+                    env.GlowHdrThreshold = 0.9f;
+                    _sunEnvironment.Environment = env;
+                    _globeContainer.AddChild(_sunEnvironment);
+                }
             }
-            else if (_editorSolarProminenceRoot != null)
+            else
             {
-                _editorSolarProminenceRoot.Visible = false;
+                if (_editorSolarProminenceRoot != null)
+                    _editorSolarProminenceRoot.Visible = false;
+                if (_sunEnvironment != null)
+                {
+                    _sunEnvironment.QueueFree();
+                    _sunEnvironment = null;
+                }
             }
         }
 
@@ -1489,11 +1738,11 @@ namespace Jogomania.Editor
         {
             var surface = new SurfaceTool();
             surface.Begin(Mesh.PrimitiveType.Triangles);
-            int segments = 30;
-            float arcWidth = radius * 0.0008f;
-            float start = -0.70f;
-            float end = 0.70f;
-            float height = radius * (0.0065f + (seed % 4) * 0.0012f);
+            int segments = 60;
+            float arcWidth = radius * 0.012f;
+            float start = -0.40f;
+            float end = 0.40f;
+            float height = radius * (0.15f + (seed % 5) * 0.05f);
 
             for (int i = 0; i < segments; i++)
             {
@@ -1730,7 +1979,6 @@ namespace Jogomania.Editor
                         else
                         {
                             _tacticalView.ZoomLevel = TacticalView.ClampZoom(_tacticalView.ZoomLevel * 1.25f);
-                            _camera2D.Position = _tacticalView.ClampCameraPosition(_camera2D.Position);
                         }
                     }
                     else if (mouseBtn.ButtonIndex == MouseButton.WheelDown && mouseBtn.Pressed)
@@ -1747,7 +1995,6 @@ namespace Jogomania.Editor
                             else
                             {
                                 _tacticalView.ZoomLevel = TacticalView.ClampZoom(nz);
-                                _camera2D.Position = _tacticalView.ClampCameraPosition(_camera2D.Position);
                             }
                         }
                     }
@@ -1859,7 +2106,6 @@ namespace Jogomania.Editor
             else if (_isDraggingGlobe && _isTacticalMode)
             {
                 _camera2D.Position -= relative * (_camera2D.Zoom.X > 0 ? 1.0f / _camera2D.Zoom.X : 1.0f);
-                _camera2D.Position = _tacticalView.ClampCameraPosition(_camera2D.Position);
             }
         }
 
@@ -1897,7 +2143,6 @@ namespace Jogomania.Editor
                 else
                 {
                     _tacticalView.ZoomLevel = TacticalView.ClampZoom(newZoom);
-                    _camera2D.Position = _tacticalView.ClampCameraPosition(_camera2D.Position);
                 }
             }
         }

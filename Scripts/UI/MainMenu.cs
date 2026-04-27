@@ -1,4 +1,4 @@
-﻿using Godot;
+﻿﻿using Godot;
 using System.IO;
 using System.Threading.Tasks;
 using Jogomania.Core;
@@ -24,7 +24,7 @@ namespace Jogomania.UI
         private async void LoadLatestSavePreview()
         {
             int requestId = ++_previewRequestId;
-            string savePath = Path.Combine(GameManager.Instance.GetPartidasDir(), "Slot_1", "save_atual.json");
+            string savePath = Path.Combine(GameManager.Instance.GetPartidasDir(), "Slot_1", "save_atual", "save_atual.json");
             if (!File.Exists(savePath))
             {
                 if (!CanApplyPreviewResult(requestId)) return;
