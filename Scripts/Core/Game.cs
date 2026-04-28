@@ -959,18 +959,18 @@ namespace Jogomania.Core
 		{
 			return type switch
 			{
-				0 => new Color(0.0f, 0.09f, 0.42f),
-				1 => new Color(0.06f, 0.28f, 0.68f),
-				2 => new Color(0.88f, 0.78f, 0.50f),
-				3 => new Color(0.30f, 0.66f, 0.22f),
-				4 => new Color(0.08f, 0.42f, 0.10f),
-				5 => new Color(0.03f, 0.26f, 0.05f),
-				6 => new Color(0.67f, 0.56f, 0.30f),
-				7 => new Color(0.86f, 0.64f, 0.18f),
-				8 => new Color(0.58f, 0.70f, 0.70f),
+				0 => new Color(0.015f, 0.075f, 0.22f),
+				1 => new Color(0.12f, 0.36f, 0.62f),
+				2 => new Color(0.84f, 0.76f, 0.52f),
+				3 => new Color(0.42f, 0.62f, 0.30f),
+				4 => new Color(0.16f, 0.38f, 0.16f),
+				5 => new Color(0.05f, 0.27f, 0.10f),
+				6 => new Color(0.63f, 0.56f, 0.34f),
+				7 => new Color(0.78f, 0.60f, 0.28f),
+				8 => new Color(0.60f, 0.68f, 0.64f),
 				9 => new Color(0.90f, 0.95f, 1.0f),
-				10 => new Color(0.45f, 0.45f, 0.44f),
-				11 => new Color(0.74f, 0.74f, 0.74f),
+				10 => new Color(0.47f, 0.45f, 0.40f),
+				11 => new Color(0.78f, 0.76f, 0.70f),
 				_ => Colors.Black
 			};
 		}

@@ -78,18 +78,18 @@ namespace Jogomania.Map
         {
             switch (type)
             {
-                case 0: return new Color(0.0f, 0.1f, 0.5f); // DeepOcean
-                case 1: return new Color(0.2f, 0.4f, 0.8f); // ShallowWater
-                case 2: return new Color(0.9f, 0.8f, 0.5f); // Beach
-                case 3: return new Color(0.3f, 0.7f, 0.2f); // Grassland
-                case 4: return new Color(0.1f, 0.5f, 0.1f); // Forest
-                case 5: return new Color(0.05f, 0.3f, 0.05f); // Jungle
-                case 6: return new Color(0.7f, 0.6f, 0.3f); // Savanna
-                case 7: return new Color(0.9f, 0.7f, 0.2f); // Desert
-                case 8: return new Color(0.7f, 0.8f, 0.8f); // Tundra
+                case 0: return new Color(0.015f, 0.075f, 0.22f); // DeepOcean
+                case 1: return new Color(0.12f, 0.36f, 0.62f); // ShallowWater
+                case 2: return new Color(0.84f, 0.76f, 0.52f); // Beach
+                case 3: return new Color(0.42f, 0.62f, 0.30f); // Grassland
+                case 4: return new Color(0.16f, 0.38f, 0.16f); // Forest
+                case 5: return new Color(0.05f, 0.27f, 0.10f); // Jungle
+                case 6: return new Color(0.63f, 0.56f, 0.34f); // Savanna
+                case 7: return new Color(0.78f, 0.60f, 0.28f); // Desert
+                case 8: return new Color(0.60f, 0.68f, 0.64f); // Tundra
                 case 9: return new Color(0.9f, 0.95f, 1.0f); // Snow
-                case 10: return new Color(0.5f, 0.5f, 0.5f); // Mountain
-                case 11: return new Color(0.8f, 0.8f, 0.8f); // HighPeak
+                case 10: return new Color(0.47f, 0.45f, 0.40f); // Mountain
+                case 11: return new Color(0.78f, 0.76f, 0.70f); // HighPeak
                 default: return new Color(0,0,0);
             }
         }

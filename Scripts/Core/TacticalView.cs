@@ -16,7 +16,7 @@ namespace Jogomania.Core
         public bool FlipX = true;
         public bool FlipY = true;
 
-        private const float MapAspectX = 1.5f;
+        private const float MapAspectX = 1.0f; // equiretangular 2:1: tiles quadrados mantem a Tactical View coerente com o globo
         public const float MinZoomLevel = 2.35f;
         public const float MaxZoomLevel = 64f;
 
@@ -140,35 +140,34 @@ namespace Jogomania.Core
 
         private void DrawTerrainDetail(int mapX, int mapY, float wx, float wy, float tileW, float tileH)
         {
+            // Visual de mapa: substitui símbolos grandes por uma textura cartográfica sutil.
             byte terrain = GetTerrainAt(mapX, mapY);
+            float n = Hash01(mapX, mapY) - 0.5f;
+
             if (terrain == 10 || terrain == 11)
             {
-                Color ridge = terrain == 11 ? new Color(0.82f, 0.82f, 0.80f, 0.85f) : new Color(0.36f, 0.36f, 0.34f, 0.85f);
-                float seed = Mathf.Sin(mapX * 12.9898f + mapY * 78.233f);
-                Vector2 a = new Vector2(wx + tileW * 0.20f, wy + tileH * (0.65f + seed * 0.06f));
-                Vector2 b = new Vector2(wx + tileW * 0.50f, wy + tileH * (0.18f - seed * 0.04f));
-                Vector2 c = new Vector2(wx + tileW * 0.84f, wy + tileH * (0.70f - seed * 0.05f));
-                DrawPolyline(new Vector2[] { a, b, c }, ridge, Mathf.Max(1.2f, ZoomLevel * 0.12f));
-                DrawLine(b, new Vector2(wx + tileW * 0.45f, wy + tileH * 0.85f), new Color(0.14f, 0.14f, 0.14f, 0.35f), Mathf.Max(1f, ZoomLevel * 0.06f));
+                Color ridge = terrain == 11 ? new Color(0.95f, 0.95f, 0.90f, 0.30f) : new Color(0.18f, 0.16f, 0.13f, 0.22f);
+                DrawLine(new Vector2(wx + tileW * 0.18f, wy + tileH * (0.62f + n * 0.10f)),
+                         new Vector2(wx + tileW * 0.82f, wy + tileH * (0.40f - n * 0.10f)),
+                         ridge, Mathf.Max(0.7f, ZoomLevel * 0.035f));
             }
             else if (terrain == 4 || terrain == 5)
             {
-                Color canopy = terrain == 5 ? new Color(0.0f, 0.26f, 0.02f, 0.75f) : new Color(0.04f, 0.34f, 0.06f, 0.72f);
-                for (int i = 0; i < 3; i++)
-                {
-                    float ox = Mathf.Abs(Mathf.Sin(mapX * (i + 1) * 5.13f + mapY)) % 1f;
-                    float oy = Mathf.Abs(Mathf.Sin(mapY * (i + 2) * 3.71f + mapX)) % 1f;
-                    DrawCircle(new Vector2(wx + tileW * (0.25f + ox * 0.5f), wy + tileH * (0.25f + oy * 0.5f)), Mathf.Max(1.2f, ZoomLevel * 0.16f), canopy);
-                }
+                DrawCircle(new Vector2(wx + tileW * (0.35f + n * 0.20f), wy + tileH * 0.45f),
+                           Mathf.Max(0.6f, ZoomLevel * 0.045f), new Color(0.02f, 0.12f, 0.02f, 0.18f));
             }
-            else if (terrain == 7)
+            else if (terrain == 7 || terrain == 6)
             {
-                DrawLine(new Vector2(wx + tileW * 0.15f, wy + tileH * 0.65f), new Vector2(wx + tileW * 0.85f, wy + tileH * 0.48f), new Color(0.98f, 0.78f, 0.28f, 0.28f), Mathf.Max(1f, ZoomLevel * 0.045f));
+                DrawLine(new Vector2(wx + tileW * 0.12f, wy + tileH * (0.52f + n * 0.16f)),
+                         new Vector2(wx + tileW * 0.88f, wy + tileH * (0.48f - n * 0.16f)),
+                         new Color(1.0f, 0.82f, 0.42f, 0.13f), Mathf.Max(0.5f, ZoomLevel * 0.025f));
             }
-            else if (terrain == 3 || terrain == 6 || terrain == 8)
-            {
-                DrawLine(new Vector2(wx + tileW * 0.18f, wy + tileH * 0.58f), new Vector2(wx + tileW * 0.82f, wy + tileH * 0.50f), new Color(0.08f, 0.12f, 0.06f, 0.18f), Mathf.Max(1f, ZoomLevel * 0.035f));
-            }
+        }
+
+        private static float Hash01(int x, int y)
+        {
+            float v = Mathf.Sin(x * 12.9898f + y * 78.233f) * 43758.5453f;
+            return v - Mathf.Floor(v);
         }
 
         private void DrawRivers(Vector2 camPos, float halfW, float halfH, float tileW, float tileH)
@@ -191,8 +190,32 @@ namespace Jogomania.Core
                 }
 
                 if (points.Count >= 2)
-                    DrawPolyline(points.ToArray(), new Color(0.12f, 0.52f, 0.95f, 0.92f), Mathf.Max(1.2f, ZoomLevel * river.Width * 0.18f));
+                {
+                    Vector2[] smooth = SmoothRiverPoints(points);
+                    float width = Mathf.Max(1.2f, ZoomLevel * river.Width * 0.16f);
+                    DrawPolyline(smooth, new Color(0.02f, 0.10f, 0.18f, 0.28f), width + Mathf.Max(1.0f, ZoomLevel * 0.05f));
+                    DrawPolyline(smooth, new Color(0.10f, 0.42f, 0.78f, 0.94f), width);
+                    if (ZoomLevel >= 12f)
+                        DrawPolyline(smooth, new Color(0.62f, 0.86f, 1.0f, 0.30f), Mathf.Max(0.6f, width * 0.35f));
+                }
             }
+        }
+
+        private Vector2[] SmoothRiverPoints(System.Collections.Generic.List<Vector2> points)
+        {
+            if (points.Count < 3) return points.ToArray();
+            var smooth = new System.Collections.Generic.List<Vector2>();
+            smooth.Add(points[0]);
+            for (int i = 1; i < points.Count - 1; i++)
+            {
+                Vector2 prev = points[i - 1];
+                Vector2 current = points[i];
+                Vector2 next = points[i + 1];
+                smooth.Add(prev.Lerp(current, 0.72f));
+                smooth.Add(current.Lerp(next, 0.28f));
+            }
+            smooth.Add(points[points.Count - 1]);
+            return smooth.ToArray();
         }
 
         private void DrawVillages(Vector2 camPos, float halfW, float halfH, float tileW, float tileH)
@@ -272,7 +295,7 @@ namespace Jogomania.Core
             }
             else if (ownerId == 255)
             {
-                return new Color(1.0f, 0.9f, 0.05f, 1.0f);
+                return c.Lerp(new Color(0.95f, 0.82f, 0.32f, 1.0f), 0.18f);
             }
 
             return c;

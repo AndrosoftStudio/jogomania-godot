@@ -1096,9 +1096,9 @@ namespace Jogomania.Editor
                         if (mapX >= map.Width || mapY >= map.Height) continue;
                         byte terrain = chunk.TerrainMap[y * ChunkData.CHUNK_SIZE + x];
                         
-                        if ((terrain == 10 || terrain == 11 || terrain == 4) && rng.Randf() < 0.035f)
+                        if ((terrain == 10 || terrain == 11) && rng.Randf() < 0.080f)
                             starts.Add(new Vector2I(mapX, mapY));
-                        else if (terrain >= 3 && terrain < 10 && rng.Randf() < 0.006f) // 3 a 9 são biomas seguros de terra firme
+                        else if ((terrain == 4 || terrain == 5 || terrain == 8) && rng.Randf() < 0.012f) // 3 a 9 são biomas seguros de terra firme
                             fallbackStarts.Add(new Vector2I(mapX, mapY));
                     }
                 }
@@ -1107,7 +1107,7 @@ namespace Jogomania.Editor
             if (starts.Count < 8)
                 starts.AddRange(fallbackStarts);
 
-            int maxRivers = Mathf.Clamp(map.Width * map.Height / (100 * 100), 15, 150);
+            int maxRivers = Mathf.Clamp(map.Width * map.Height / (150 * 150), 8, 90);
             int attempts = Mathf.Max(starts.Count, maxRivers * 18);
             for (int i = 0; i < attempts && map.Rivers.Count < maxRivers; i++)
             {
@@ -1115,7 +1115,7 @@ namespace Jogomania.Editor
                     ? starts[(int)(rng.Randi() % (uint)starts.Count)]
                     : new Vector2I(rng.RandiRange(0, map.Width - 1), rng.RandiRange(0, map.Height - 1));
                 RiverData river = TraceRiver(map, start, rng);
-                if (river.Points.Count >= 4) // Diminuido para não rejeitar rios menores
+                if (river.Points.Count >= 18) // Diminuido para não rejeitar rios menores
                 {
                     map.Rivers.Add(river);
                     CarveRiverTerrain(map, river);
@@ -1132,54 +1132,22 @@ namespace Jogomania.Editor
 
         private RiverData TraceRiver(MapData map, Vector2I start, RandomNumberGenerator rng)
         {
-            var river = new RiverData { Width = rng.RandfRange(0.8f, 1.8f) };
-            
-            // --- CLASSIFICACAO HIDROLOGICA PROCEDURAL ---
+            var river = new RiverData { Width = rng.RandfRange(0.75f, 1.45f) };
             byte startTerrain = GetSafeTerrainAt(map, start.X, start.Y);
-            
-            if (startTerrain == 10 || startTerrain == 11) {
-                river.Feeding = rng.Randf() < 0.7f ? "Nival" : "Glacial";
-                river.Relief = "Planalto";
-            } else if (startTerrain == 4 || startTerrain == 5) {
-                river.Feeding = "Pluvial";
-                river.Relief = "Planicie";
-            } else {
-                river.Feeding = "Misto";
-                river.Relief = rng.Randf() < 0.5f ? "Planicie" : "Planalto";
-            }
 
-            float randRegime = rng.Randf();
-            if (startTerrain == 7) river.Regime = "Efemero";
-            else if (startTerrain == 6 || startTerrain == 8) river.Regime = randRegime < 0.6f ? "Intermitente" : "Perene";
-            else river.Regime = randRegime < 0.8f ? "Perene" : "Intermitente";
-
-            float randDest = rng.Randf();
-            if (river.Regime == "Efemero" || startTerrain == 7) river.Destination = randDest < 0.7f ? "Arreico" : "Endorreico";
-            else if (randDest < 0.10f) river.Destination = "Endorreico";
-            else if (randDest < 0.15f && river.Relief == "Planalto") river.Destination = "Criptorreico";
-            else river.Destination = "Exorreico";
-
-            float randMorph = rng.Randf();
-            if (river.Relief == "Planalto") {
-                river.Morphology = randMorph < 0.6f ? "Retilineo" : "Entrelacado";
-            } else {
-                if (randMorph < 0.5f) river.Morphology = "Meandrico";
-                else if (randMorph < 0.8f) river.Morphology = "Anastomosado";
-                else river.Morphology = "Retilineo";
-            }
-            // --- FIM DA CLASSIFICACAO ---
+            river.Feeding = (startTerrain == 10 || startTerrain == 11) ? (rng.Randf() < 0.65f ? "Nival" : "Glacial") : "Pluvial";
+            river.Relief = (startTerrain == 10 || startTerrain == 11) ? "Planalto" : "Planicie";
+            river.Regime = startTerrain == 7 ? "Efemero" : (rng.Randf() < 0.88f ? "Perene" : "Intermitente");
+            river.Destination = startTerrain == 7 && rng.Randf() < 0.55f ? "Endorreico" : "Exorreico";
+            river.Morphology = river.Relief == "Planalto" ? "Retilineo" : (rng.Randf() < 0.72f ? "Meandrico" : "Retilineo");
 
             var visited = new HashSet<Vector2I>();
             Vector2I current = start;
-            int targetY = map.Height / 2;
-            Vector2I momentum = Vector2I.Zero;
+            Vector2 currentDir = new Vector2(rng.RandfRange(-1f, 1f), rng.RandfRange(-0.35f, 0.35f)).Normalized();
+            if (currentDir.LengthSquared() < 0.01f) currentDir = Vector2.Right;
 
-            int lengthCap = rng.RandiRange(100, 420);
-            if (river.Destination == "Arreico" || river.Destination == "Criptorreico") lengthCap = rng.RandiRange(15, 60);
-            if (river.Destination == "Endorreico") lengthCap = rng.RandiRange(30, 120);
-            if (river.Morphology == "Entrelacado" || river.Morphology == "Anastomosado") river.Width *= rng.RandfRange(1.3f, 2.0f);
-
-            float meanderAngle = rng.RandfRange(0, Mathf.Tau);
+            int lengthCap = rng.RandiRange(Mathf.Max(60, map.Width / 4), Mathf.Max(140, map.Width));
+            if (river.Destination == "Endorreico") lengthCap = rng.RandiRange(45, Mathf.Max(70, map.Width / 3));
 
             for (int step = 0; step < lengthCap; step++)
             {
@@ -1187,68 +1155,84 @@ namespace Jogomania.Editor
                 river.Points.Add(new MapPointData { X = current.X, Y = current.Y });
 
                 byte terrain = GetSafeTerrainAt(map, current.X, current.Y);
-                
-                if (river.Destination == "Arreico" && terrain == 7 && step > lengthCap * 0.5f) break;
-                if (river.Destination == "Criptorreico" && (terrain == 10 || terrain == 11) && step > 10) break;
-                
-                if (terrain == 0 || terrain == 1) {
-                    river.Destination = "Exorreico"; 
+                if ((terrain == 0 || terrain == 1) && step > 4)
+                {
+                    river.Destination = "Exorreico";
                     break;
                 }
+                if (river.Destination == "Endorreico" && step > lengthCap * 0.72f && (terrain == 6 || terrain == 7 || terrain == 8)) break;
 
+                float currentHeight = GetHydrologyHeight(map, current.X, current.Y);
                 Vector2I best = current;
                 float bestScore = float.MaxValue;
-                Vector2I nextMomentum = momentum;
-                
+                Vector2 bestDir = currentDir;
+
                 for (int oy = -1; oy <= 1; oy++)
                 {
                     for (int ox = -1; ox <= 1; ox++)
                     {
                         if (ox == 0 && oy == 0) continue;
                         int nx = WrapMapX(current.X + ox, map.Width);
-                        int ny = WrapMapY(current.Y + oy, map.Height);
-                        byte nt = GetSafeTerrainAt(map, nx, ny);
-                        
-                        float height = GetSafeTerrainHeight(nt);
-                        float equatorPull = Mathf.Abs(ny - targetY) * 0.00008f;
-                        
-                        float jitterAmount = river.Morphology == "Meandrico" ? 0.035f : 0.006f;
-                        if (river.Morphology == "Anastomosado") jitterAmount = 0.02f;
-                        float jitter = rng.Randf() * jitterAmount;
-                        
-                        float meanderBonus = 0f;
-                        if (river.Morphology == "Meandrico" || river.Morphology == "Anastomosado") {
-                            Vector2 dir = new Vector2(ox, oy).Normalized();
-                            float expectedDx = Mathf.Cos(meanderAngle);
-                            float expectedDy = Mathf.Sin(meanderAngle);
-                            meanderBonus = -dir.Dot(new Vector2(expectedDx, expectedDy)) * 0.04f;
-                        }
+                        int ny = Mathf.Clamp(current.Y + oy, 0, map.Height - 1);
+                        Vector2I candidate = new Vector2I(nx, ny);
+                        if (visited.Contains(candidate)) continue;
 
-                        float waterBonus = (nt == 0 || nt == 1) ? -2.0f : 0f;
-                        float momentumStrength = river.Morphology == "Retilineo" ? -0.15f : -0.02f;
-                        float momentumBonus = (ox == momentum.X && oy == momentum.Y) ? momentumStrength : 0f; 
-                        
-                        float score = height + equatorPull + jitter + meanderBonus + waterBonus + momentumBonus;
+                        byte nt = GetSafeTerrainAt(map, nx, ny);
+                        Vector2 dir = new Vector2(ox, oy).Normalized();
+                        float h = GetHydrologyHeight(map, nx, ny);
+                        float downSlope = Mathf.Max(0f, currentHeight - h);
+                        float seaBonus = (nt == 0 || nt == 1) ? -5.0f : 0f;
+                        float coastPull = DistanceToNearestWater(map, nx, ny, 7) * 0.018f;
+                        float straightness = -dir.Dot(currentDir) * (river.Morphology == "Retilineo" ? 0.28f : 0.10f);
+                        float meander = river.Morphology == "Meandrico" ? Mathf.Sin((step * 0.18f) + start.X * 0.037f + start.Y * 0.071f) * dir.Cross(currentDir) * -0.16f : 0f;
+                        float noise = rng.RandfRange(0f, river.Morphology == "Meandrico" ? 0.055f : 0.020f);
+                        float uphillPenalty = h > currentHeight + 0.03f ? 1.8f : 0f;
+
+                        float score = h - downSlope * 0.75f + coastPull + straightness + meander + noise + uphillPenalty + seaBonus;
                         if (score < bestScore)
                         {
                             bestScore = score;
-                            best = new Vector2I(nx, ny);
-                            nextMomentum = new Vector2I(ox, oy);
+                            best = candidate;
+                            bestDir = dir;
                         }
                     }
                 }
 
                 if (best == current) break;
                 current = best;
-                momentum = nextMomentum;
-
-                if (river.Morphology == "Meandrico" || river.Morphology == "Anastomosado")
-                {
-                    meanderAngle += rng.RandfRange(-0.4f, 0.4f);
-                }
+                currentDir = currentDir.Lerp(bestDir, river.Morphology == "Meandrico" ? 0.42f : 0.72f).Normalized();
             }
 
+            if (river.Points.Count > 80) river.Width *= rng.RandfRange(1.1f, 1.55f);
             return river;
+        }
+
+        private float GetHydrologyHeight(MapData map, int x, int y)
+        {
+            byte terrain = GetSafeTerrainAt(map, x, y);
+            float terrainHeight = GetSafeTerrainHeight(terrain);
+            float latitudePenalty = Mathf.Abs(((float)y / Mathf.Max(1, map.Height - 1)) - 0.5f) * 0.06f;
+            float regionalSlope = ((float)y / Mathf.Max(1, map.Height - 1)) * 0.025f;
+            float detail = Fbm((x + map.Width * 0.13f) * 0.035f, (y + map.Height * 0.37f) * 0.035f, 3) * 0.05f;
+            return terrainHeight + latitudePenalty + regionalSlope + detail;
+        }
+
+        private int DistanceToNearestWater(MapData map, int x, int y, int radius)
+        {
+            int best = radius + 1;
+            for (int oy = -radius; oy <= radius; oy++)
+            {
+                int sy = Mathf.Clamp(y + oy, 0, map.Height - 1);
+                for (int ox = -radius; ox <= radius; ox++)
+                {
+                    int sx = WrapMapX(x + ox, map.Width);
+                    byte t = GetSafeTerrainAt(map, sx, sy);
+                    if (t != 0 && t != 1) continue;
+                    int d = Mathf.Abs(ox) + Mathf.Abs(oy);
+                    if (d < best) best = d;
+                }
+            }
+            return best;
         }
 
         private byte GetSafeTerrainAt(MapData map, int x, int y)
@@ -2061,18 +2045,18 @@ namespace Jogomania.Editor
         {
             switch (type)
             {
-                case 0: return new Color(0.0f, 0.1f, 0.5f);
-                case 1: return new Color(0.2f, 0.4f, 0.8f);
-                case 2: return new Color(0.9f, 0.8f, 0.5f);
-                case 3: return new Color(0.3f, 0.7f, 0.2f);
-                case 4: return new Color(0.1f, 0.5f, 0.1f);
-                case 5: return new Color(0.05f, 0.3f, 0.05f);
-                case 6: return new Color(0.7f, 0.6f, 0.3f);
-                case 7: return new Color(0.9f, 0.7f, 0.2f);
-                case 8: return new Color(0.7f, 0.8f, 0.8f);
+                case 0: return new Color(0.015f, 0.075f, 0.22f);
+                case 1: return new Color(0.12f, 0.36f, 0.62f);
+                case 2: return new Color(0.84f, 0.76f, 0.52f);
+                case 3: return new Color(0.42f, 0.62f, 0.30f);
+                case 4: return new Color(0.16f, 0.38f, 0.16f);
+                case 5: return new Color(0.05f, 0.27f, 0.10f);
+                case 6: return new Color(0.63f, 0.56f, 0.34f);
+                case 7: return new Color(0.78f, 0.60f, 0.28f);
+                case 8: return new Color(0.60f, 0.68f, 0.64f);
                 case 9: return new Color(0.9f, 0.95f, 1.0f);
-                case 10: return new Color(0.5f, 0.5f, 0.5f);
-                case 11: return new Color(0.8f, 0.8f, 0.8f);
+                case 10: return new Color(0.47f, 0.45f, 0.40f);
+                case 11: return new Color(0.78f, 0.76f, 0.70f);
                 default: return new Color(0,0,0);
             }
         }
